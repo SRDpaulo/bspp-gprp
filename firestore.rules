@@ -1,0 +1,30 @@
+rules_version = '2';
+// Règles de sécurité Firestore — site BSPP GPRP
+// À coller dans Firebase > Firestore Database > Règles, puis « Publier ».
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function connecte() { return request.auth != null; }
+    function monRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function staff() { return connecte() && monRole() in ['responsable', 'recruteur', 'formateur']; }
+
+    match /users/{uid} {
+      // Chacun lit sa propre fiche ; l'encadrement lit toutes les fiches.
+      allow read: if connecte() && (request.auth.uid == uid || staff());
+
+      // Le responsable crée tous les comptes ; un recruteur ne crée que des recrues.
+      allow create: if connecte() && (
+        monRole() == 'responsable' ||
+        (monRole() == 'recruteur' && request.resource.data.role == 'recrue')
+      );
+
+      // Seul le responsable modifie (rôle, grade, affectation, activation).
+      allow update: if connecte() && monRole() == 'responsable';
+
+      // Pas de suppression depuis le site : on désactive le compte.
+      allow delete: if false;
+    }
+  }
+}

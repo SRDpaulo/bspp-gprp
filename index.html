@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BSPP GPRP — Suivi recrutement & formation</title>
+<style>
+  :root{
+    --rouge:#b3121f; --rouge-f:#8c0d17; --bleu:#14213d; --bleu-2:#1f2f52;
+    --fond:#f3f4f7; --carte:#fff; --texte:#1a1d24; --gris:#6b7280; --bord:#e2e5eb;
+    --vert:#1f7a3f; --orange:#b45309;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--fond);color:var(--texte);font-size:15px}
+  button,input,select{font:inherit}
+  .btn{border:0;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:600;background:var(--rouge);color:#fff}
+  .btn:hover{background:var(--rouge-f)}
+  .btn.sec{background:#fff;color:var(--texte);border:1px solid var(--bord)}
+  .btn.sec:hover{background:#f7f7f9}
+  .btn.petit{padding:5px 10px;font-size:13px}
+  .btn:disabled{opacity:.5;cursor:default}
+  input,select{width:100%;padding:9px 11px;border:1px solid var(--bord);border-radius:8px;background:#fff}
+  input:focus,select:focus{outline:2px solid #f1b5ba;border-color:var(--rouge)}
+  label{display:block;font-size:13px;font-weight:600;margin:12px 0 5px;color:#374151}
+  .erreur{background:#fdecee;color:var(--rouge-f);border:1px solid #f5c2c7;padding:9px 12px;border-radius:8px;margin-top:12px;font-size:14px}
+  .ok{background:#e8f5ec;color:var(--vert);border:1px solid #b7e0c3;padding:12px;border-radius:8px;font-size:14px}
+
+  /* Connexion */
+  .login-wrap{min-height:100vh;display:grid;place-items:center;padding:20px;background:linear-gradient(160deg,var(--bleu),var(--bleu-2))}
+  .login{background:#fff;border-radius:14px;padding:32px;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+  .blason{width:56px;height:56px;border-radius:50%;background:var(--rouge);color:#fff;display:grid;place-items:center;font-weight:800;letter-spacing:.5px;margin-bottom:14px}
+  .login h1{margin:0;font-size:22px}
+  .login p.sous{margin:4px 0 18px;color:var(--gris);font-size:14px}
+  .login .btn{width:100%;margin-top:18px;padding:11px}
+  .indice{margin-top:16px;font-size:12.5px;color:var(--gris);background:#f7f7f9;border-radius:8px;padding:10px}
+
+  /* Structure */
+  header.top{background:var(--bleu);color:#fff;display:flex;align-items:center;gap:14px;padding:12px 24px}
+  header.top .titre{font-weight:700;font-size:17px}
+  header.top .titre small{display:block;font-weight:400;opacity:.7;font-size:12px}
+  header.top .esp{flex:1}
+  header.top .moi{text-align:right;font-size:13px;line-height:1.3}
+  header.top .btn{background:transparent;border:1px solid rgba(255,255,255,.4)}
+  .demo{background:#fff4d6;color:#7a5200;text-align:center;padding:7px;font-size:13px;border-bottom:1px solid #f0dc9c}
+  main{max-width:1150px;margin:0 auto;padding:24px}
+  h2{margin:0 0 16px;font-size:20px}
+
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+  .stat{background:var(--carte);border:1px solid var(--bord);border-radius:12px;padding:16px}
+  .stat .n{font-size:28px;font-weight:800}
+  .stat .l{color:var(--gris);font-size:13px}
+
+  .carte{background:var(--carte);border:1px solid var(--bord);border-radius:12px;padding:18px}
+  .barre{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+  .barre input{max-width:280px}
+  .barre select{max-width:220px}
+  .barre .esp{flex:1}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--gris);padding:9px 10px;border-bottom:1px solid var(--bord)}
+  td{padding:10px;border-bottom:1px solid #f0f1f4;vertical-align:middle}
+  tr.inactif td{opacity:.5}
+  .tbl-wrap{overflow-x:auto}
+  .vide{text-align:center;color:var(--gris);padding:30px}
+
+  .badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+  .r-responsable{background:#fde8ea;color:var(--rouge-f)}
+  .r-recruteur{background:#e7eefc;color:#1e40af}
+  .r-formateur{background:#efe7fb;color:#5b21b6}
+  .r-recrue{background:#e8f5ec;color:var(--vert)}
+  .s-actif{color:var(--vert);font-weight:600;font-size:13px}
+  .s-inactif{color:var(--gris);font-weight:600;font-size:13px}
+
+  /* Fenêtre */
+  .voile{position:fixed;inset:0;background:rgba(15,20,35,.55);display:grid;place-items:center;padding:16px;z-index:10}
+  .fenetre{background:#fff;border-radius:14px;width:100%;max-width:560px;max-height:92vh;overflow:auto;padding:24px}
+  .fenetre h3{margin:0 0 4px}
+  .grille{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+  .grille .plein{grid-column:1/-1}
+  .ligne-mdp{display:flex;gap:8px}
+  .ligne-mdp input{flex:1}
+  .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+  .identifiants{font-family:ui-monospace,Consolas,monospace;background:#f7f7f9;border:1px dashed var(--bord);padding:12px;border-radius:8px;margin:12px 0;white-space:pre-wrap}
+
+  .fiche dl{display:grid;grid-template-columns:170px 1fr;gap:8px 14px;margin:0}
+  .fiche dt{color:var(--gris)}
+  .fiche dd{margin:0;font-weight:600}
+  .bientot{margin-top:18px;border:1px dashed var(--bord);border-radius:12px;padding:18px;color:var(--gris)}
+
+  @media (max-width:640px){
+    .grille{grid-template-columns:1fr}
+    header.top{padding:10px 14px}
+    main{padding:16px}
+    .fiche dl{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="module">
+/* =====================================================================
+   CONFIGURATION
+   1) Laisse FIREBASE_CONFIG à null pour tester en MODE DÉMO
+      (les comptes sont stockés seulement dans ton navigateur).
+   2) Pour la vraie version partagée, colle ici l'objet firebaseConfig
+      donné par Firebase (voir README.md).
+   ===================================================================== */
+const FIREBASE_CONFIG = null;
+/* Exemple :
+const FIREBASE_CONFIG = {
+  apiKey: "AIza...",
+  authDomain: "bspp-gprp.firebaseapp.com",
+  projectId: "bspp-gprp",
+  storageBucket: "bspp-gprp.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abc123"
+};
+*/
+
+// Les identifiants deviennent des adresses techniques (aucun mail n'est envoyé).
+const DOMAINE_IDENTIFIANT = "bspp-gprp.fr";
+
+/* ===================================================================== */
+
+const ROLES = {
+  responsable: "Responsable recrutement",
+  recruteur:   "Recruteur",
+  formateur:   "Formateur",
+  recrue:      "Recrue / Sapeur",
+};
+const GRADES = ["Élève sapeur","Sapeur 2CL","Sapeur 1CL","Caporal","Caporal-chef","Sergent","Sergent-chef",
+  "Adjudant","Adjudant-chef","Major","Lieutenant","Capitaine","Commandant","Lieutenant-colonel","Colonel"];
+
+// Qui peut créer quels comptes
+const rolesCreables = r =>
+  r === "responsable" ? ["recrue","formateur","recruteur","responsable"] :
+  r === "recruteur"   ? ["recrue"] : [];
+const peutModifier = r => r === "responsable";
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const normaliserId = s => String(s || "").trim().toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "")
+  .replace(/\s+/g, ".").replace(/[^a-z0-9._-]/g, "");
+const versEmail = id => `${normaliserId(id)}@${DOMAINE_IDENTIFIANT}`;
+const genererMdp = () => {
+  const alpha = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const t = new Uint32Array(10); crypto.getRandomValues(t);
+  return Array.from(t, n => alpha[n % alpha.length]).join("");
+};
+const dateFr = iso => iso ? new Date(iso).toLocaleDateString("fr-FR") : "—";
+
+/* ---------------- Back-end MODE DÉMO (navigateur seulement) ---------------- */
+function backendDemo(){
+  const CLE = "bspp_gprp_demo_comptes", SESSION = "bspp_gprp_demo_session";
+  const graine = [{
+    id: "demo-responsable", identifiant: "responsable", pwd: "bspp2026",
+    prenom: "Paul", nom: "Morenti", role: "responsable", grade: "Caporal",
+    matricule: "", cs: "CS Ménilmontant", actif: true,
+    createdAt: new Date().toISOString(), createdBy: "système",
+  }];
+  let cache = null;
+  const charger = () => {
+    if (cache) return cache;
+    try { cache = JSON.parse(localStorage.getItem(CLE)); } catch { cache = null; }
+    if (!Array.isArray(cache)) { cache = graine; sauver(); }
+    return cache;
+  };
+  const sauver = () => { try { localStorage.setItem(CLE, JSON.stringify(cache)); } catch {} };
+  const sansMdp = ({ pwd, ...p }) => p;
+  let sessionMem = null;
+  const lireSession = () => { try { return sessionStorage.getItem(SESSION); } catch { return sessionMem; } };
+  const ecrireSession = v => { sessionMem = v; try { v ? sessionStorage.setItem(SESSION, v) : sessionStorage.removeItem(SESSION); } catch {} };
+
+  return {
+    mode: "demo",
+    async courant(){ const id = lireSession(); const u = charger().find(x => x.id === id && x.actif); return u ? sansMdp(u) : null; },
+    async connexion(ident, pwd){
+      const u = charger().find(x => x.identifiant === normaliserId(ident));
+      if (!u || u.pwd !== pwd) throw new Error("Identifiant ou mot de passe incorrect.");
+      if (!u.actif) throw new Error("Ce compte est désactivé. Contacte le responsable recrutement.");
+      ecrireSession(u.id); return sansMdp(u);
+    },
+    async deconnexion(){ ecrireSession(null); },
+    async listerComptes(){ return charger().map(sansMdp); },
+    async creerCompte(data, pwd, par){
+      const liste = charger();
+      if (liste.some(x => x.identifiant === data.identifiant)) throw new Error("Cet identifiant existe déjà.");
+      const n = { id: "u" + Date.now().toString(36), ...data, pwd, actif: true, createdAt: new Date().toISOString(), createdBy: par };
+      liste.push(n); sauver(); return sansMdp(n);
+    },
+    async modifierCompte(id, patch){
+      const liste = charger(); const i = liste.findIndex(x => x.id === id);
+      if (i < 0) throw new Error("Compte introuvable.");
+      liste[i] = { ...liste[i], ...patch }; sauver();
+    },
+  };
+}
+
+/* ---------------- Back-end FIREBASE (version partagée) ---------------- */
+async function backendFirebase(cfg){
+  const base = "https://www.gstatic.com/firebasejs/10.12.2/";
+  const { initializeApp } = await import(base + "firebase-app.js");
+  const A = await import(base + "firebase-auth.js");
+  const F = await import(base + "firebase-firestore.js");
+
+  const app = initializeApp(cfg);
+  const auth = A.getAuth(app);
+  const db = F.getFirestore(app);
+  // Deuxième instance : permet de créer un compte sans déconnecter le responsable.
+  const appSecondaire = initializeApp(cfg, "creation-comptes");
+  const authSecondaire = A.getAuth(appSecondaire);
+
+  const traduire = e => {
+    const c = e?.code || "";
+    if (c.includes("invalid-credential") || c.includes("wrong-password") || c.includes("user-not-found")) return new Error("Identifiant ou mot de passe incorrect.");
+    if (c.includes("email-already-in-use")) return new Error("Cet identifiant existe déjà.");
+    if (c.includes("weak-password")) return new Error("Mot de passe trop court (6 caractères minimum).");
+    if (c.includes("too-many-requests")) return new Error("Trop d'essais. Réessaie dans quelques minutes.");
+    if (c.includes("permission-denied")) return new Error("Action refusée : ton rôle ne le permet pas.");
+    return new Error(e?.message || "Erreur inconnue.");
+  };
+  const profil = async uid => {
+    const s = await F.getDoc(F.doc(db, "users", uid));
+    return s.exists() ? { id: uid, ...s.data() } : null;
+  };
+
+  return {
+    mode: "firebase",
+    async courant(){
+      await auth.authStateReady();
+      const u = auth.currentUser; if (!u) return null;
+      const p = await profil(u.uid);
+      if (!p || !p.actif) { await A.signOut(auth); return null; }
+      return p;
+    },
+    async connexion(ident, pwd){
+      let cred;
+      try { cred = await A.signInWithEmailAndPassword(auth, versEmail(ident), pwd); } catch (e) { throw traduire(e); }
+      const p = await profil(cred.user.uid);
+      if (!p) { await A.signOut(auth); throw new Error("Compte sans fiche. Contacte le responsable recrutement."); }
+      if (!p.actif) { await A.signOut(auth); throw new Error("Ce compte est désactivé. Contacte le responsable recrutement."); }
+      return p;
+    },
+    async deconnexion(){ await A.signOut(auth); },
+    async listerComptes(){
+      try { const s = await F.getDocs(F.collection(db, "users")); return s.docs.map(d => ({ id: d.id, ...d.data() })); }
+      catch (e) { throw traduire(e); }
+    },
+    async creerCompte(data, pwd, par){
+      try {
+        const cred = await A.createUserWithEmailAndPassword(authSecondaire, versEmail(data.identifiant), pwd);
+        await A.signOut(authSecondaire);
+        const fiche = { ...data, actif: true, createdAt: new Date().toISOString(), createdBy: par };
+        await F.setDoc(F.doc(db, "users", cred.user.uid), fiche);
+        return { id: cred.user.uid, ...fiche };
+      } catch (e) { throw traduire(e); }
+    },
+    async modifierCompte(id, patch){
+      try { await F.updateDoc(F.doc(db, "users", id), patch); } catch (e) { throw traduire(e); }
+    },
+  };
+}
+
+/* ---------------- Application ---------------- */
+const $app = document.getElementById("app");
+let B = null, moi = null, comptes = [], filtre = { q: "", role: "" };
+
+const nomComplet = u => `${u.prenom || ""} ${(u.nom || "").toUpperCase()}`.trim();
+
+function vueConnexion(erreur = ""){
+  $app.innerHTML = `
+  <div class="login-wrap">
+    <form class="login" id="f-login">
+      <div class="blason">BSPP</div>
+      <h1>Suivi des sapeurs</h1>
+      <p class="sous">Grand Paris RP · Recrutement & formation</p>
+      <label for="ident">Identifiant</label>
+      <input id="ident" autocomplete="username" required placeholder="prenom.nom">
+      <label for="mdp">Mot de passe</label>
+      <input id="mdp" type="password" autocomplete="current-password" required>
+      ${erreur ? `<div class="erreur">${esc(erreur)}</div>` : ""}
+      <button class="btn" type="submit">Se connecter</button>
+      ${B.mode === "demo" ? `<div class="indice"><b>Mode démo</b> — identifiant <b>responsable</b>, mot de passe <b>bspp2026</b>.</div>` : ""}
+    </form>
+  </div>`;
+  document.getElementById("f-login").onsubmit = async ev => {
+    ev.preventDefault();
+    const btn = ev.target.querySelector("button"); btn.disabled = true; btn.textContent = "Connexion…";
+    try { moi = await B.connexion(document.getElementById("ident").value, document.getElementById("mdp").value); await vueAccueil(); }
+    catch (e) { vueConnexion(e.message); }
+  };
+}
+
+function entete(){
+  return `
+  ${B.mode === "demo" ? `<div class="demo">Mode démo : les comptes sont enregistrés uniquement dans ce navigateur. Branche Firebase pour la vraie version (voir README).</div>` : ""}
+  <header class="top">
+    <div class="titre">BSPP · GPRP<small>Suivi recrutement & formation</small></div>
+    <div class="esp"></div>
+    <div class="moi">${esc((moi.grade ? moi.grade + " " : "") + nomComplet(moi))}<br><span style="opacity:.7">${esc(ROLES[moi.role] || moi.role)}</span></div>
+    <button class="btn petit" id="b-deco">Déconnexion</button>
+  </header>`;
+}
+function brancherEntete(){
+  document.getElementById("b-deco").onclick = async () => { await B.deconnexion(); moi = null; vueConnexion(); };
+}
+
+async function vueAccueil(){
+  if (moi.role === "recrue") return vueFiche();
+  $app.innerHTML = entete() + `<main><div class="vide">Chargement…</div></main>`;
+  brancherEntete();
+  try { comptes = await B.listerComptes(); vueTableau(); }
+  catch (e) { document.querySelector("main").innerHTML = `<div class="erreur">${esc(e.message)}</div>`; }
+}
+
+function vueFiche(){
+  const ligne = (t, v) => `<dt>${t}</dt><dd>${esc(v || "—")}</dd>`;
+  $app.innerHTML = entete() + `
+  <main>
+    <h2>Ma fiche</h2>
+    <div class="carte fiche">
+      <dl>
+        ${ligne("Nom", nomComplet(moi))}
+        ${ligne("Grade", moi.grade)}
+        ${ligne("Matricule", moi.matricule)}
+        ${ligne("Affectation", moi.cs)}
+        ${ligne("Identifiant", moi.identifiant)}
+        ${ligne("Entrée dans le système", dateFr(moi.createdAt))}
+      </dl>
+      <div class="bientot"><b>Compétences & formations</b><br>
+        Bientôt ici : ta progression en formation initiale (modules M1 à M6, évaluation finale), tes FISP et tes qualifications.</div>
+    </div>
+  </main>`;
+  brancherEntete();
+}
+
+function vueTableau(){
+  const compte = r => comptes.filter(c => c.role === r && c.actif).length;
+  const creables = rolesCreables(moi.role);
+  $app.innerHTML = entete() + `
+  <main>
+    <h2>Tableau de bord</h2>
+    <div class="stats">
+      <div class="stat"><div class="n">${comptes.filter(c => c.actif).length}</div><div class="l">Comptes actifs</div></div>
+      <div class="stat"><div class="n">${compte("recrue")}</div><div class="l">Recrues / sapeurs</div></div>
+      <div class="stat"><div class="n">${compte("formateur")}</div><div class="l">Formateurs</div></div>
+      <div class="stat"><div class="n">${compte("recruteur") + compte("responsable")}</div><div class="l">Recruteurs & responsables</div></div>
+    </div>
+    <div class="carte">
+      <div class="barre">
+        <input id="q" placeholder="Rechercher un nom, un identifiant…" value="${esc(filtre.q)}">
+        <select id="fr">
+          <option value="">Tous les rôles</option>
+          ${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${filtre.role === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+        <div class="esp"></div>
+        ${creables.length ? `<button class="btn" id="b-creer">+ Créer un compte</button>` : ""}
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Grade</th><th>Affectation</th><th>Créé le</th><th>Statut</th>${peutModifier(moi.role) ? "<th></th>" : ""}</tr></thead>
+        <tbody id="corps"></tbody>
+      </table></div>
+    </div>
+  </main>`;
+  brancherEntete();
+  remplirTableau();
+  document.getElementById("q").oninput = e => { filtre.q = e.target.value; remplirTableau(); };
+  document.getElementById("fr").onchange = e => { filtre.role = e.target.value; remplirTableau(); };
+  const bc = document.getElementById("b-creer"); if (bc) bc.onclick = () => fenetreCompte();
+}
+
+function remplirTableau(){
+  const q = filtre.q.trim().toLowerCase();
+  const liste = comptes
+    .filter(c => !filtre.role || c.role === filtre.role)
+    .filter(c => !q || `${c.prenom} ${c.nom} ${c.identifiant} ${c.matricule} ${c.cs}`.toLowerCase().includes(q))
+    .sort((a, b) => (b.actif - a.actif) || nomComplet(a).localeCompare(nomComplet(b), "fr"));
+  const corps = document.getElementById("corps");
+  const nbCol = peutModifier(moi.role) ? 8 : 7;
+  if (!liste.length) { corps.innerHTML = `<tr><td colspan="${nbCol}" class="vide">Aucun compte.</td></tr>`; return; }
+  corps.innerHTML = liste.map(c => `
+    <tr class="${c.actif ? "" : "inactif"}">
+      <td><b>${esc(nomComplet(c))}</b>${c.matricule ? `<br><small style="color:var(--gris)">Mle ${esc(c.matricule)}</small>` : ""}</td>
+      <td>${esc(c.identifiant)}</td>
+      <td><span class="badge r-${esc(c.role)}">${esc(ROLES[c.role] || c.role)}</span></td>
+      <td>${esc(c.grade || "—")}</td>
+      <td>${esc(c.cs || "—")}</td>
+      <td>${dateFr(c.createdAt)}</td>
+      <td>${c.actif ? `<span class="s-actif">Actif</span>` : `<span class="s-inactif">Désactivé</span>`}</td>
+      ${peutModifier(moi.role) ? `<td><button class="btn sec petit" data-modif="${esc(c.id)}">Modifier</button></td>` : ""}
+    </tr>`).join("");
+  corps.querySelectorAll("[data-modif]").forEach(b => b.onclick = () => fenetreCompte(comptes.find(c => c.id === b.dataset.modif)));
+}
+
+function fenetreCompte(existant = null){
+  const edition = !!existant;
+  const roles = edition ? Object.keys(ROLES) : rolesCreables(moi.role);
+  const v = existant || { prenom: "", nom: "", identifiant: "", role: roles[0], grade: "Élève sapeur", matricule: "", cs: "" };
+  const soiMeme = edition && existant.id === moi.id;
+  const voile = document.createElement("div");
+  voile.className = "voile";
+  voile.innerHTML = `
+  <form class="fenetre" id="f-compte">
+    <h3>${edition ? "Modifier le compte" : "Créer un compte"}</h3>
+    <div style="color:var(--gris);font-size:14px">${edition ? esc(nomComplet(existant)) : "Tu remettras les identifiants à la personne en fin d'entretien."}</div>
+    <div class="grille">
+      <div><label>Prénom</label><input name="prenom" required value="${esc(v.prenom)}"></div>
+      <div><label>Nom</label><input name="nom" required value="${esc(v.nom)}"></div>
+      ${edition ? "" : `
+      <div><label>Identifiant de connexion</label><input name="identifiant" required placeholder="prenom.nom" value="${esc(v.identifiant)}"></div>
+      <div><label>Mot de passe provisoire</label><div class="ligne-mdp"><input name="mdp" required minlength="6" value="${genererMdp()}"><button type="button" class="btn sec petit" id="b-gen">↻</button></div></div>`}
+      <div><label>Rôle</label><select name="role" ${soiMeme ? "disabled" : ""}>${roles.map(r => `<option value="${r}" ${v.role === r ? "selected" : ""}>${ROLES[r]}</option>`).join("")}</select></div>
+      <div><label>Grade</label><select name="grade">${GRADES.map(g => `<option ${v.grade === g ? "selected" : ""}>${g}</option>`).join("")}</select></div>
+      <div><label>Matricule (facultatif)</label><input name="matricule" value="${esc(v.matricule)}"></div>
+      <div><label>Affectation (CS)</label><input name="cs" placeholder="ex. CS Ménilmontant" value="${esc(v.cs)}"></div>
+      ${edition && !soiMeme ? `<div class="plein"><label>Statut</label><select name="actif"><option value="1" ${existant.actif ? "selected" : ""}>Actif</option><option value="0" ${existant.actif ? "" : "selected"}>Désactivé (ne peut plus se connecter)</option></select></div>` : ""}
+    </div>
+    <div id="msg"></div>
+    <div class="actions">
+      <button type="button" class="btn sec" id="b-annuler">Annuler</button>
+      <button type="submit" class="btn">${edition ? "Enregistrer" : "Créer le compte"}</button>
+    </div>
+  </form>`;
+  document.body.appendChild(voile);
+  const f = voile.querySelector("form");
+  const fermer = () => voile.remove();
+  voile.querySelector("#b-annuler").onclick = fermer;
+  voile.onclick = e => { if (e.target === voile) fermer(); };
+
+  if (!edition) {
+    const auto = () => { if (!f.identifiant.dataset.touche) f.identifiant.value = normaliserId(`${f.prenom.value}.${f.nom.value}`.replace(/^\.|\.$/g, "")); };
+    f.prenom.oninput = auto; f.nom.oninput = auto;
+    f.identifiant.oninput = () => { f.identifiant.dataset.touche = "1"; };
+    voile.querySelector("#b-gen").onclick = () => { f.mdp.value = genererMdp(); };
+  }
+
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    const msg = voile.querySelector("#msg"); msg.innerHTML = "";
+    const btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+    const data = {
+      prenom: f.prenom.value.trim(), nom: f.nom.value.trim(),
+      role: soiMeme ? existant.role : f.role.value, grade: f.grade.value,
+      matricule: f.matricule.value.trim(), cs: f.cs.value.trim(),
+    };
+    try {
+      if (edition) {
+        if (f.actif) data.actif = f.actif.value === "1";
+        await B.modifierCompte(existant.id, data);
+        Object.assign(existant, data);
+        if (soiMeme) Object.assign(moi, data);
+        fermer(); vueTableau();
+      } else {
+        const ident = normaliserId(f.identifiant.value);
+        if (!ident) throw new Error("Identifiant invalide.");
+        if (f.mdp.value.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum).");
+        if (!rolesCreables(moi.role).includes(data.role)) throw new Error("Ton rôle ne permet pas de créer ce type de compte.");
+        const nouveau = await B.creerCompte({ ...data, identifiant: ident }, f.mdp.value, nomComplet(moi));
+        comptes.push(nouveau);
+        const texte = `Identifiant : ${ident}\nMot de passe : ${f.mdp.value}\nSite : ${location.href.split("#")[0]}`;
+        f.innerHTML = `
+          <h3>Compte créé</h3>
+          <div class="ok">${esc(nomComplet(nouveau))} · ${esc(ROLES[nouveau.role])}</div>
+          <p style="margin:14px 0 0">Donne ces identifiants à la personne :</p>
+          <div class="identifiants" id="ids">${esc(texte)}</div>
+          <div class="actions">
+            <button type="button" class="btn sec" id="b-copier">Copier</button>
+            <button type="button" class="btn" id="b-fin">Terminé</button>
+          </div>`;
+        f.querySelector("#b-copier").onclick = async e => { try { await navigator.clipboard.writeText(texte); e.target.textContent = "Copié ✓"; } catch { e.target.textContent = "Sélectionne et copie"; } };
+        f.querySelector("#b-fin").onclick = () => { fermer(); vueTableau(); };
+      }
+    } catch (e) {
+      msg.innerHTML = `<div class="erreur">${esc(e.message)}</div>`; btn.disabled = false;
+    }
+  };
+}
+
+/* ---------------- Démarrage ---------------- */
+(async () => {
+  try {
+    B = FIREBASE_CONFIG ? await backendFirebase(FIREBASE_CONFIG) : backendDemo();
+    moi = await B.courant();
+    moi ? await vueAccueil() : vueConnexion();
+  } catch (e) {
+    $app.innerHTML = `<main><div class="erreur">Impossible de démarrer : ${esc(e.message)}</div></main>`;
+  }
+})();
+</script>
+</body>
+</html>

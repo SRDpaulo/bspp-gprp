@@ -84,11 +84,11 @@
   .r-recrue{background:#e8f5ec;color:var(--vert)}
   .r-recruteur_formateur{background:#e9e7fb;color:#3730a3}
   .r-commandement{background:#14213d;color:#fff}
-  .e-candidature{background:#eef0f3;color:#374151}
-  .e-convoque{background:#e7eefc;color:#1e40af}
-  .e-fi{background:#fdf0dc;color:#92400e}
-  .e-parrainage{background:#efe7fb;color:#5b21b6}
-  .e-affecte{background:#e8f5ec;color:var(--vert)}
+  .e-recrutement{background:#eef0f3;color:#374151}
+  .e-fmg{background:#e7eefc;color:#1e40af}
+  .e-inc_sav{background:#fdf0dc;color:#92400e}
+  .e-permis{background:#efe7fb;color:#5b21b6}
+  .e-complet{background:#e8f5ec;color:var(--vert)}
   .e-sortie{background:#fde8ea;color:var(--rouge-f)}
   .s-actif{color:var(--vert);font-weight:600;font-size:13px}
   .s-inactif{color:var(--gris);font-weight:600;font-size:13px}
@@ -183,19 +183,19 @@ const DOMAINE_IDENTIFIANT = "bspp-gprp.fr";
 /* ---------- Référentiel ---------- */
 const ROLES = { commandement:"Commandement 12e Cie", responsable:"Responsable recrutement", recruteur_formateur:"Recruteur-formateur", recruteur:"Recruteur", formateur:"Formateur", recrue:"Recrue / Sapeur" };
 const AFFECTATION_DEFAUT = "CS Ménilmontant";
-const ETAPES = [["candidature","Candidature"],["convoque","Convoqué recrutement"],["fi","Formation initiale"],["parrainage","Parrainage"],["affecte","Affecté"],["sortie","Sortie du parcours"]];
+const ETAPES = [["recrutement","Recrutement"],["fmg","FMG"],["inc_sav","INC / SAV"],["permis","Permis"],["complet","Parcours complet"],["sortie","Sortie du parcours"]];
 const NOM_ETAPE = Object.fromEntries(ETAPES);
-const DOCS = [["cni","CNI RP"],["casier","Casier judiciaire"],["medical","Certificat médical"],["lettre","Lettre de motivation"],["cv","CV RP"],["permis","Permis RP (facultatif)"],["psc1","PSC1 (bonus)"]];
-const DOCS_OBLIG = ["cni","casier","medical","lettre","cv"];
-const MODULES = [["m1","M1 — Accueil et vie militaire"],["m2","M2 — Radio et fonctionnement opérationnel"],["m3","M3 — Secours à personne (SUAP)"],["m4","M4 — Incendie"],["m5","M5 — Secours routier et opérations diverses"],["m6","M6 — Cas complets et cohésion"]];
-const FISP = [["vl","Permis VL"],["sav","SAV"],["inc","INC"],["pl","Permis PL"]];
+const DOCS = [["cv","CV"],["permis","Permis de conduire"],["cni","Carte d'identité"],["casier","Casier judiciaire"]];
+const FORMATIONS = [["fmg","FMG — Formation militaire générale"],["inc","INC — Incendie"],["sav","SAV — Secours à victime"]];
+const PERMIS = [["vl","Permis VL"],["echelle","Permis échelle"],["pl","Permis poids lourd"]];
+const GRADE_ENTREE = "Sapeur 2CL", GRADE_FI = "Sapeur 1CL";
 const GRADES = ["Élève sapeur","Sapeur 2CL","Sapeur 1CL","Caporal","Caporal-chef","Sergent","Sergent-chef","Adjudant","Adjudant-chef","Major","Lieutenant","Capitaine","Commandant","Lieutenant-colonel","Colonel"];
 
 /* ---------- Droits (les mêmes sont imposés par firestore.rules) ---------- */
 const CLES_MODIFIABLES = {
-  recruteur: ["prenom","nom","discord","tel","matricule","cs","grade","etape","motifSortie","dateCandidature","docs","dossier","recrutement"],
-  formateur: ["grade","etape","motifSortie","cs","fi","affectation","fisp","qualifs"],
-  recruteur_formateur: ["prenom","nom","discord","tel","matricule","cs","grade","etape","motifSortie","dateCandidature","docs","dossier","recrutement","fi","affectation","fisp","qualifs"],
+  recruteur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier"],
+  formateur: ["grade","cs","sortie","motifSortie","formations","permis"],
+  recruteur_formateur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier","formations","permis"],
 };
 const estAdmin = r => r === "responsable" || r === "commandement";   // accès complet
 const peutModifierCle = (role, cle) => estAdmin(role) || (CLES_MODIFIABLES[role] || []).includes(cle);
@@ -216,60 +216,47 @@ function setPath(o, p, v){ const k = p.split("."); let c = o; for (let i = 0; i 
 
 function ficheVierge(){
   return {
-    discord:"", tel:"", matricule:"", grade:"Élève sapeur", cs:AFFECTATION_DEFAUT,
-    etape:"fi", motifSortie:"", dateCandidature:auj(),
-    docs:{}, dossier:{note:"", decision:"", date:""},
-    recrutement:{date:"", sport:"", qcm:"", entretien:"", msp:"", jury:""},
-    fi:{modules:{}, evalQcm:"", evalMsp:"", evalDate:"", rattrapage:""},
-    affectation:{dateFin:"", parrain:"", debut:"", fin:"", bilan:""},
-    fisp:{}, qualifs:[],
+    discord:"", tel:"", matricule:"", grade:GRADE_ENTREE, cs:AFFECTATION_DEFAUT,
+    sortie:false, motifSortie:"",
+    docs:{}, dossier:{ decision:"", date:"", recruteur:"" },
+    formations:{}, permis:{},
   };
 }
 function normaliser(u){
   const v = ficheVierge(), s = u || {};
-  return {
-    ...v, ...s,
-    docs:{...(s.docs||{})}, dossier:{...v.dossier, ...(s.dossier||{})},
-    recrutement:{...v.recrutement, ...(s.recrutement||{})},
-    fi:{...v.fi, ...(s.fi||{}), modules:{...((s.fi||{}).modules||{})}},
-    affectation:{...v.affectation, ...(s.affectation||{})},
-    fisp:{...(s.fisp||{})}, qualifs:Array.isArray(s.qualifs) ? s.qualifs : [],
-  };
+  return { ...v, ...s,
+    docs:{ ...(s.docs || {}) }, dossier:{ ...v.dossier, ...(s.dossier || {}) },
+    formations:{ ...(s.formations || {}) }, permis:{ ...(s.permis || {}) } };
 }
 
 /* ---------- Calculs ---------- */
-function calcRecrutement(s){
-  const r = s.recrutement, sp = num(r.sport), q = num(r.qcm), e = num(r.entretien), m = num(r.msp);
-  if ([sp,q,e,m].some(x => x === null)) return { total:null, apte:null };
-  const total = Math.round((sp + q/2 + e + m) * 10) / 10;
-  return { total, apte: total >= 24 && sp > 0 && q > 0 && e > 0 && m > 0 };
-}
-function calcFI(s){
-  const faits = MODULES.filter(([k]) => s.fi.modules[k]?.fait).length;
-  const q = num(s.fi.evalQcm), m = num(s.fi.evalMsp);
-  if (q === null || m === null) return { faits, moyenne:null, reussi:null };
-  const moyenne = Math.round(((q + m) / 2) * 10) / 10;
-  return { faits, moyenne, reussi: moyenne >= 12 && q >= 8 && m >= 8 };
+const fait = (s, groupe, k) => !!s[groupe]?.[k]?.fait;
+const docsComplets = s => DOCS.every(([k]) => s.docs[k]);
+const fiValidee = s => FORMATIONS.every(([k]) => fait(s, "formations", k));
+const peutPasser1CL = s => fiValidee(s) && ["Élève sapeur", "Sapeur 2CL"].includes(s.grade);
+function etapeDe(s){
+  if (s.sortie) return "sortie";
+  if (s.dossier.decision !== "accepte") return "recrutement";
+  if (!fait(s, "formations", "fmg")) return "fmg";
+  if (!fiValidee(s)) return "inc_sav";
+  if (!PERMIS.every(([k]) => fait(s, "permis", k))) return "permis";
+  return "complet";
 }
 function progression(s){
-  const pts = [
-    num(s.dossier.note) !== null && num(s.dossier.note) >= 12,
-    calcRecrutement(s).apte === true,
-    ...MODULES.map(([k]) => !!s.fi.modules[k]?.fait),
-    calcFI(s).reussi === true,
-    !!s.affectation.fin,
-    ...FISP.map(([k]) => !!s.fisp[k]?.date),
-  ];
+  const pts = [s.dossier.decision === "accepte", ...FORMATIONS.map(([k]) => fait(s, "formations", k)), ...PERMIS.map(([k]) => fait(s, "permis", k))];
   return Math.round(pts.filter(Boolean).length / pts.length * 100);
 }
 function prochaineAction(s){
-  switch (s.etape){
-    case "candidature": return DOCS_OBLIG.every(k => s.docs[k]) ? "Noter le dossier" : "Dossier incomplet";
-    case "convoque": return s.recrutement.date ? `Recrutement le ${dateFr(s.recrutement.date)}` : "Fixer la date de recrutement";
-    case "fi": { const m = MODULES.find(([k]) => !s.fi.modules[k]?.fait); return m ? m[1].split(" — ")[0] + " à faire" : "Évaluation finale"; }
-    case "parrainage": return s.affectation.fin ? `Bilan le ${dateFr(s.affectation.fin)}` : "Désigner un parrain";
-    case "affecte": { const f = FISP.find(([k]) => !s.fisp[k]?.date); return f ? `FISP : ${f[1]}` : "Parcours à jour"; }
+  switch (etapeDe(s)){
     case "sortie": return s.motifSortie || "Sorti du parcours";
+    case "recrutement": return s.dossier.decision === "refuse" ? "Candidature refusée" : docsComplets(s) ? "Décision de recrutement à prendre" : "Documents manquants";
+    case "fmg": return "FMG à faire";
+    case "inc_sav": return FORMATIONS.filter(([k]) => !fait(s, "formations", k)).map(([, l]) => l.split(" — ")[0]).join(" + ") + " à faire";
+    case "permis": {
+      const reste = PERMIS.filter(([k]) => !fait(s, "permis", k)).map(([, l]) => l.replace("Permis ", ""));
+      return (peutPasser1CL(s) ? "Passer 1re classe · " : "") + "Permis : " + reste.join(", ");
+    }
+    case "complet": return peutPasser1CL(s) ? "Passer 1re classe" : "Parcours terminé";
   }
   return "";
 }
@@ -498,7 +485,7 @@ function afficher(){
 /* ---------- Onglet SUIVI ---------- */
 function vueSuivi(){
   const recrues = comptes.filter(c => c.role === "recrue" && c.actif);
-  const n = k => recrues.filter(s => s.etape === k).length;
+  const n = k => recrues.filter(s => etapeDe(s) === k).length;
   $app.innerHTML = entete() + `
   <main>
     <div class="barre"><h2>Suivi des recrues</h2><div class="esp"></div>
@@ -524,15 +511,15 @@ function vueSuivi(){
 function remplirSuivi(){
   const q = filtre.q.trim().toLowerCase(), ordre = Object.fromEntries(ETAPES.map(([k], i) => [k, i]));
   const liste = comptes.filter(c => c.role === "recrue" && c.actif)
-    .filter(s => !filtre.etape || s.etape === filtre.etape)
+    .filter(s => !filtre.etape || etapeDe(s) === filtre.etape)
     .filter(s => !q || `${s.prenom} ${s.nom} ${s.matricule} ${s.cs} ${s.identifiant}`.toLowerCase().includes(q))
-    .sort((a, b) => (ordre[a.etape] - ordre[b.etape]) || nomComplet(a).localeCompare(nomComplet(b), "fr"));
+    .sort((a, b) => (ordre[etapeDe(a)] - ordre[etapeDe(b)]) || nomComplet(a).localeCompare(nomComplet(b), "fr"));
   const corps = document.getElementById("corps");
   if (!liste.length){ corps.innerHTML = `<tr><td colspan="5" class="vide">Aucune recrue ici.</td></tr>`; return; }
   corps.innerHTML = liste.map(s => { const p = progression(s); return `
     <tr class="cliquable" data-id="${esc(s.id)}">
       <td><b>${esc(nomComplet(s))}</b><div class="sous">${esc(s.grade)}${s.cs ? " · " + esc(s.cs) : ""}${s.matricule ? " · Mle " + esc(s.matricule) : ""}</div></td>
-      <td><span class="badge e-${esc(s.etape)}">${esc(NOM_ETAPE[s.etape] || s.etape)}</span></td>
+      <td><span class="badge e-${etapeDe(s)}">${esc(NOM_ETAPE[etapeDe(s)])}</span>${fiValidee(s) ? ` <span class="badge e-complet">FI ✓</span>` : ""}</td>
       <td><div class="prog"><div class="b"><i style="width:${p}%"></i></div><span>${p} %</span></div></td>
       <td>${esc(prochaineAction(s))}</td>
       <td class="sous">${dateFr(s.updatedAt || s.createdAt)}</td>
@@ -556,119 +543,80 @@ const choix = (label, path, options) =>
 const coche = (label, path) => `<label class="coche"><input type="checkbox" data-c="${path}" ${getPath(fiche.brouillon, path) ? "checked" : ""} ${ro(path.split(".")[0])}> ${label}</label>`;
 const verrou = cles => cles.some(k => peutModifierCle(moi.role, k)) ? "" : `<span class="verrou">Lecture seule</span>`;
 
-function resumeDossier(s){
-  const n = num(s.dossier.note), d = {accepte:"Accepté", completer:"À compléter (48 h)", refuse:"Refusé"}[s.dossier.decision];
-  if (n === null && !d) return "Dossier pas encore noté";
-  return `${n !== null ? `Note : ${n}/20 ${n >= 12 ? "(convocable)" : "(sous le seuil de 12)"}` : "Pas de note"}${d ? " · " + d : ""}`;
+function resumeRecrutement(s){
+  const d = { accepte:"Recruté", refuse:"Refusé" }[s.dossier.decision];
+  return `${docsComplets(s) ? "Documents complets" : "Documents manquants"} · ${d || "Décision en attente"}`;
 }
-function resumeRecrutement(s){ const r = calcRecrutement(s); return r.total === null ? "Saisis les 4 notes pour calculer le résultat" : `Total : ${r.total}/40 · ${r.apte ? "APTE" : "INAPTE ou ajourné"}`; }
 function resumeFI(s){
-  const f = calcFI(s), base = `Modules validés : ${f.faits}/6`;
-  return f.moyenne === null ? base + " · évaluation finale non saisie" : `${base} · Moyenne : ${f.moyenne}/20 · ${f.reussi ? "RÉUSSIE" : "ÉCHEC (moyenne < 12 ou une note < 8)"}`;
+  const n = FORMATIONS.filter(([k]) => fait(s, "formations", k)).length;
+  if (!fiValidee(s)) return `Formation initiale : ${n}/3 validées`;
+  return peutPasser1CL(s) ? "Formation initiale VALIDÉE · peut passer Sapeur 1re classe" : `Formation initiale VALIDÉE · ${s.grade}`;
 }
-const clsDossier = s => s.dossier.decision === "accepte" ? "ok" : s.dossier.decision === "refuse" ? "ko" : "";
-const clsBool = v => v === true ? "ok" : v === false ? "ko" : "";
+const clsRecrutement = s => s.dossier.decision === "accepte" ? "ok" : s.dossier.decision === "refuse" ? "ko" : "";
+
+const ligneValidation = (groupe, k, l) => {
+  const m = fiche.brouillon[groupe][k] || {};
+  return `<div class="module ${m.fait ? "fait" : ""}">
+    <input type="checkbox" data-c="${groupe}.${k}.fait" ${m.fait ? "checked" : ""} ${ro(groupe)} aria-label="${esc(l)} validé">
+    <div class="nom">${esc(l)}</div>
+    <input type="date" data-f="${groupe}.${k}.date" value="${esc(m.date || "")}" ${ro(groupe)} aria-label="Date">
+    <input data-f="${groupe}.${k}.formateur" value="${esc(m.formateur || "")}" placeholder="Formateur" ${ro(groupe)}>
+  </div>`;
+};
 
 function vueFiche(){
-  const s = fiche.brouillon, rec = calcRecrutement(s), fi = calcFI(s), p = progression(s);
-  const docsOk = DOCS_OBLIG.every(k => s.docs[k]);
+  const s = fiche.brouillon, p = progression(s), et = etapeDe(s);
   const peutQuelqueChose = estAdmin(moi.role) || (CLES_MODIFIABLES[moi.role] || []).length;
   $app.innerHTML = entete() + `
   <main>
     <div class="entete-fiche">
       <button class="btn sec petit" id="b-retour">← Retour</button>
       <h2>${esc(nomComplet(s))}</h2>
-      <span class="badge e-${esc(s.etape)}">${esc(NOM_ETAPE[s.etape])}</span>
+      <span class="badge e-${et}" id="badge-etape">${esc(NOM_ETAPE[et])}</span>
       <span class="sous">${esc(s.identifiant)}</span>
       <div class="esp"></div>
       <div class="prog" style="min-width:180px" id="prog-fiche"><div class="b"><i style="width:${p}%"></i></div><span>${p} %</span></div>
     </div>
     <div class="sections">
       <div class="carte sec plein">
-        <h3><span class="num">0</span> Identité et statut ${verrou(["prenom","etape"])}</h3>
+        <h3><span class="num">0</span> Identité ${verrou(["prenom","grade"])}</h3>
         <div class="g4">
           ${champ("Prénom","prenom")}${champ("Nom","nom")}${champ("Pseudo Discord","discord")}${champ("Téléphone RP","tel")}
           ${champ("Matricule","matricule")}${choix("Grade","grade",GRADES.map(g => [g, g]))}
-          ${champ("Affectation (CS)","cs","text",'placeholder="ex. CS Ménilmontant"')}${champ("Date de candidature","dateCandidature","date")}
+          ${champ("Affectation (CS)","cs")}
+          <div><label class="l">Statut</label><label class="coche" style="margin-top:10px"><input type="checkbox" data-c="sortie" ${s.sortie ? "checked" : ""} ${ro("sortie")}> Sorti du parcours</label></div>
         </div>
-        <div class="g2">
-          ${choix("Étape actuelle","etape",ETAPES)}
-          ${s.etape === "sortie" ? champ("Motif de sortie","motifSortie","text",'placeholder="Refus, inapte, échec FI, démission…"') : "<div></div>"}
-        </div>
+        ${s.sortie ? `<div class="g2">${champ("Motif de sortie","motifSortie","text",'placeholder="Refus, démission, radiation…"')}</div>` : ""}
       </div>
 
-      <div class="carte sec">
-        <h3><span class="num">1</span> Dossier de candidature ${verrou(["docs"])}</h3>
-        <div class="sous">Documents RP reçus dans le ticket</div>
-        <div class="coches">${DOCS.map(([k, l]) => coche(l, "docs." + k)).join("")}</div>
-        <div class="resultat ${docsOk ? "ok" : ""}">${docsOk ? "Documents obligatoires complets" : "Documents obligatoires manquants"}</div>
-      </div>
-
-      <div class="carte sec">
-        <h3><span class="num">2</span> Étude du dossier ${verrou(["dossier"])}</h3>
-        <div class="sous">Grille sur 20 · convocation à partir de 12/20</div>
-        <div class="g3">
-          ${champ("Note /20","dossier.note","number",'min="0" max="20" step="0.5"')}
-          ${choix("Décision","dossier.decision",[["","—"],["accepte","Accepté"],["completer","À compléter"],["refuse","Refusé"]])}
+      <div class="carte sec plein">
+        <h3><span class="num">1</span> Recrutement ${verrou(["docs","dossier"])}</h3>
+        <div class="sous">Documents fournis par le candidat</div>
+        <div class="coches" style="grid-template-columns:repeat(4,1fr)">${DOCS.map(([k, l]) => coche(l, "docs." + k)).join("")}</div>
+        <div class="g3" style="margin-top:6px">
+          ${choix("Décision","dossier.decision",[["","En attente"],["accepte","Recruté"],["refuse","Refusé"]])}
           ${champ("Date","dossier.date","date")}
+          ${champ("Recruteur","dossier.recruteur")}
         </div>
-        <div class="resultat ${clsDossier(s)}" data-calc="dossier">${esc(resumeDossier(s))}</div>
+        <div class="resultat ${clsRecrutement(s)}" data-calc="recrutement">${esc(resumeRecrutement(s))}</div>
       </div>
 
       <div class="carte sec plein">
-        <h3><span class="num">3</span> Journée de recrutement ${verrou(["recrutement"])}</h3>
-        <div class="sous">Sport /5, QCM /20 (compte pour moitié), entretien /15, mise en situation /10 · apte à partir de 24/40, aucune épreuve à 0</div>
-        <div class="g3">${champ("Date","recrutement.date","date")}<div style="grid-column:span 2">${champ("Jury","recrutement.jury")}</div></div>
-        <div class="g4">
-          ${champ("Sport /5","recrutement.sport","number",'min="0" max="5" step="0.5"')}
-          ${champ("QCM /20","recrutement.qcm","number",'min="0" max="20" step="0.5"')}
-          ${champ("Entretien /15","recrutement.entretien","number",'min="0" max="15" step="0.5"')}
-          ${champ("Mise en situation /10","recrutement.msp","number",'min="0" max="10" step="0.5"')}
-        </div>
-        <div class="resultat ${clsBool(rec.apte)}" data-calc="recrutement">${esc(resumeRecrutement(s))}</div>
+        <h3><span class="num">2</span> Formation initiale ${verrou(["formations"])}</h3>
+        <div class="sous">FMG d'abord, puis INC et SAV · les trois validées = FI validée et passage Sapeur 1re classe</div>
+        <div style="margin-top:8px">${FORMATIONS.map(([k, l]) => ligneValidation("formations", k, l)).join("")}</div>
+        <div class="resultat ${fiValidee(s) ? "ok" : ""}" data-calc="fi">${esc(resumeFI(s))}</div>
+        ${peutPasser1CL(s) && peutModifierCle(moi.role, "grade") ? `<button class="btn" id="b-1cl" style="margin-top:10px">Passer Sapeur 1re classe</button>` : ""}
       </div>
 
       <div class="carte sec plein">
-        <h3><span class="num">4</span> Formation initiale ${verrou(["fi"])}</h3>
-        <div class="sous">Coche chaque module validé, avec la date et le formateur</div>
-        <div style="margin-top:8px">
-          ${MODULES.map(([k, l]) => { const m = s.fi.modules[k] || {}; return `<div class="module ${m.fait ? "fait" : ""}">
-            <input type="checkbox" data-c="fi.modules.${k}.fait" ${m.fait ? "checked" : ""} ${ro("fi")} aria-label="${esc(l)} validé">
-            <div class="nom">${esc(l)}</div>
-            <input type="date" data-f="fi.modules.${k}.date" value="${esc(m.date || "")}" ${ro("fi")} aria-label="Date">
-            <input data-f="fi.modules.${k}.formateur" value="${esc(m.formateur || "")}" placeholder="Formateur" ${ro("fi")}>
-          </div>`; }).join("")}
-        </div>
-        <div class="g4" style="margin-top:6px">
-          ${champ("Évaluation : QCM /20","fi.evalQcm","number",'min="0" max="20" step="0.5"')}
-          ${champ("Évaluation : MSP /20","fi.evalMsp","number",'min="0" max="20" step="0.5"')}
-          ${champ("Date de l'évaluation","fi.evalDate","date")}
-          ${champ("Rattrapage","fi.rattrapage","text",'placeholder="date, résultat…"')}
-        </div>
-        <div class="resultat ${clsBool(fi.reussi)}" data-calc="fi">${esc(resumeFI(s))}</div>
-      </div>
-
-      <div class="carte sec">
-        <h3><span class="num">5</span> Affectation et parrainage ${verrou(["affectation"])}</h3>
-        <div class="g2">
-          ${champ("Fin de FI / cérémonie","affectation.dateFin","date")}${champ("Parrain","affectation.parrain","text",'placeholder="Caporal référent"')}
-          ${champ("Début du parrainage","affectation.debut","date")}${champ("Bilan (fin de parrainage)","affectation.fin","date")}
-        </div>
-        <label class="l">Bilan du parrain / du chef de CS</label>
-        <textarea data-f="affectation.bilan" ${ro("affectation")} placeholder="Titularisation, points à travailler…">${esc(s.affectation.bilan)}</textarea>
-      </div>
-
-      <div class="carte sec">
-        <h3><span class="num">6</span> FISP et qualifications ${verrou(["fisp"])}</h3>
-        <div class="sous">Date d'obtention de chaque FISP</div>
-        <div class="g2">${FISP.map(([k, l]) => champ(l, "fisp." + k + ".date", "date")).join("")}</div>
-        <label class="l" style="margin-top:14px">Autres compétences et qualifications</label>
-        ${s.qualifs.length ? s.qualifs.map((q, i) => `<div class="ligne-item"><div style="flex:1">${esc(q.nom)}</div><div class="d">${dateFr(q.date)}</div>${peutModifierCle(moi.role, "qualifs") ? `<button class="lien" data-suppr-qualif="${i}" aria-label="Retirer">✕</button>` : ""}</div>`).join("") : `<div class="sous">Aucune pour l'instant.</div>`}
-        ${peutModifierCle(moi.role, "qualifs") ? `<div class="ajout"><input id="qualif-nom" placeholder="ex. Chef d'agrès SUAP, PSE2…"><input id="qualif-date" type="date" value="${auj()}" style="max-width:160px"><button class="btn sec" id="b-qualif">Ajouter</button></div>` : ""}
+        <h3><span class="num">3</span> Permis ${verrou(["permis"])}</h3>
+        <div class="sous">Après la formation initiale</div>
+        <div style="margin-top:8px">${PERMIS.map(([k, l]) => ligneValidation("permis", k, l)).join("")}</div>
       </div>
 
       <div class="carte sec plein">
-        <h3><span class="num">7</span> Journal de suivi</h3>
+        <h3><span class="num">4</span> Journal de suivi</h3>
         <div class="sous">Visible uniquement par l'encadrement · enregistré dès l'ajout</div>
         <div class="ajout">
           <input id="note-date" type="date" value="${auj()}" style="max-width:160px">
@@ -700,12 +648,11 @@ function majEtat(){
 }
 function marquer(){ fiche.modifie = true; fiche.msg = ""; majEtat(); }
 function majCalculs(){
-  const s = fiche.brouillon, rec = calcRecrutement(s), fi = calcFI(s), p = progression(s);
-  const set = (k, txt, cls) => { const el = $app.querySelector(`[data-calc="${k}"]`); if (el){ el.textContent = txt; el.className = "resultat " + cls; } };
-  set("dossier", resumeDossier(s), clsDossier(s));
-  set("recrutement", resumeRecrutement(s), clsBool(rec.apte));
-  set("fi", resumeFI(s), clsBool(fi.reussi));
+  const s = fiche.brouillon, p = progression(s);
+  const el = $app.querySelector('[data-calc="recrutement"]');
+  if (el){ el.textContent = resumeRecrutement(s); el.className = "resultat " + clsRecrutement(s); }
   const pr = document.getElementById("prog-fiche"); if (pr) pr.innerHTML = `<div class="b"><i style="width:${p}%"></i></div><span>${p} %</span>`;
+  const be = document.getElementById("badge-etape"); if (be){ const et = etapeDe(s); be.textContent = NOM_ETAPE[et]; be.className = "badge e-" + et; }
 }
 
 function brancherFiche(){
@@ -715,23 +662,21 @@ function brancherFiche(){
   };
   $app.querySelectorAll("[data-f]").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
     setPath(fiche.brouillon, el.dataset.f, el.value); marquer();
-    el.dataset.f === "etape" ? vueFiche() : majCalculs();
+    if (el.dataset.f === "dossier.decision" && el.value && !fiche.brouillon.dossier.date) fiche.brouillon.dossier.date = auj();
+    if (el.dataset.f === "dossier.decision" && el.value && !fiche.brouillon.dossier.recruteur) fiche.brouillon.dossier.recruteur = nomComplet(moi);
+    el.dataset.f === "dossier.decision" || el.dataset.f === "grade" ? vueFiche() : majCalculs();
   }));
   $app.querySelectorAll("[data-c]").forEach(el => el.addEventListener("change", () => {
     setPath(fiche.brouillon, el.dataset.c, el.checked);
-    if (el.checked && el.dataset.c.startsWith("fi.modules.")){
+    if (el.checked && /^(formations|permis)\./.test(el.dataset.c)){
       const b = el.dataset.c.replace(/\.fait$/, "");
       if (!getPath(fiche.brouillon, b + ".date")) setPath(fiche.brouillon, b + ".date", auj());
-      if (!getPath(fiche.brouillon, b + ".formateur") && !["recruteur"].includes(moi.role)) setPath(fiche.brouillon, b + ".formateur", nomComplet(moi));
+      if (!getPath(fiche.brouillon, b + ".formateur")) setPath(fiche.brouillon, b + ".formateur", nomComplet(moi));
     }
     marquer(); vueFiche();
   }));
-  const bq = document.getElementById("b-qualif");
-  if (bq) bq.onclick = () => {
-    const nom = document.getElementById("qualif-nom").value.trim(); if (!nom) return;
-    fiche.brouillon.qualifs.push({ nom, date: document.getElementById("qualif-date").value }); marquer(); vueFiche();
-  };
-  $app.querySelectorAll("[data-suppr-qualif]").forEach(b => b.onclick = () => { fiche.brouillon.qualifs.splice(Number(b.dataset.supprQualif), 1); marquer(); vueFiche(); });
+  const b1 = document.getElementById("b-1cl");
+  if (b1) b1.onclick = () => { fiche.brouillon.grade = GRADE_FI; marquer(); vueFiche(); };
 
   const ajouterNote = async () => {
     const texte = document.getElementById("note-texte").value.trim(); if (!texte) return;
@@ -823,7 +768,7 @@ function remplirComptes(){
 function fenetreCompte(existant = null, roleImpose = null){
   const edition = !!existant;
   const roles = edition ? Object.keys(ROLES) : (roleImpose ? [roleImpose] : rolesCreables(moi.role));
-  const v = existant || { prenom:"", nom:"", role:roles[0], grade:"Élève sapeur", matricule:"", cs:AFFECTATION_DEFAUT };
+  const v = existant || { prenom:"", nom:"", role:roles[0], grade:roles[0] === "recrue" ? GRADE_ENTREE : "Caporal", matricule:"", cs:AFFECTATION_DEFAUT };
   const soiMeme = edition && existant.id === moi.id;
   const voile = document.createElement("div");
   voile.className = "voile";
@@ -902,13 +847,13 @@ function fenetreCompte(existant = null, roleImpose = null){
 
 /* ---------- Vue RECRUE (lecture seule) ---------- */
 function vueRecrue(){
-  const s = normaliser(moi), fi = calcFI(s), p = progression(s);
+  const s = normaliser(moi), p = progression(s), et = etapeDe(s);
   const pastille = (ok, txt, d) => `<li><span class="pastille ${ok ? "oui" : ""}">${ok ? "✓" : ""}</span><span style="flex:1">${esc(txt)}</span><span class="sous">${d ? dateFr(d) : ""}</span></li>`;
   $app.innerHTML = entete() + `
   <main>
     <div class="entete-fiche">
       <h2>Ma progression</h2>
-      <span class="badge e-${esc(s.etape)}">${esc(NOM_ETAPE[s.etape] || s.etape)}</span>
+      <span class="badge e-${et}">${esc(NOM_ETAPE[et])}</span>
       <div class="esp"></div>
       <div class="prog" style="min-width:200px"><div class="b"><i style="width:${p}%"></i></div><span>${p} %</span></div>
     </div>
@@ -920,24 +865,20 @@ function vueRecrue(){
           <dt>Grade</dt><dd>${esc(s.grade || "—")}</dd>
           <dt>Matricule</dt><dd>${esc(s.matricule || "—")}</dd>
           <dt>Affectation</dt><dd>${esc(s.cs || "—")}</dd>
-          <dt>Parrain</dt><dd>${esc(s.affectation.parrain || "—")}</dd>
           <dt>Prochaine étape</dt><dd>${esc(prochaineAction(s))}</dd>
         </dl>
       </div>
       <div class="carte">
         <h3 style="margin:0">Formation initiale</h3>
         <ul class="liste-statut">
-          ${MODULES.map(([k, l]) => pastille(s.fi.modules[k]?.fait, l, s.fi.modules[k]?.date)).join("")}
-          ${pastille(fi.reussi === true, fi.moyenne === null ? "Évaluation finale" : `Évaluation finale : ${fi.moyenne}/20${fi.reussi ? " · réussie" : ""}`, s.fi.evalDate)}
+          ${pastille(s.dossier.decision === "accepte", "Recrutement", s.dossier.date)}
+          ${FORMATIONS.map(([k, l]) => pastille(fait(s, "formations", k), l, s.formations[k]?.date)).join("")}
+          ${pastille(fiValidee(s), "Formation initiale validée · Sapeur 1re classe")}
         </ul>
       </div>
-      <div class="carte">
-        <h3 style="margin:0">FISP</h3>
-        <ul class="liste-statut">${FISP.map(([k, l]) => pastille(!!s.fisp[k]?.date, l, s.fisp[k]?.date)).join("")}</ul>
-      </div>
-      <div class="carte">
-        <h3 style="margin:0">Qualifications</h3>
-        <ul class="liste-statut">${s.qualifs.length ? s.qualifs.map(q => pastille(true, q.nom, q.date)).join("") : `<li class="sous">Aucune pour l'instant.</li>`}</ul>
+      <div class="carte plein">
+        <h3 style="margin:0">Permis</h3>
+        <ul class="liste-statut">${PERMIS.map(([k, l]) => pastille(fait(s, "permis", k), l, s.permis[k]?.date)).join("")}</ul>
       </div>
     </div>
   </main>`;

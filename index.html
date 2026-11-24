@@ -156,6 +156,10 @@
     header.top{padding:10px 14px}
     .fiche dl{grid-template-columns:1fr}
   }
+  .lien-stag{display:block;text-align:center;margin-top:14px;color:var(--rouge,#c1121f);font-weight:600;text-decoration:none}
+  .code-stag{background:#fff6d6;border:1px solid #f0d77a;border-radius:8px;padding:4px 10px;font-size:13px}
+  .code-stag b{font-family:ui-monospace,Consolas,monospace;font-size:15px;letter-spacing:2px}
+  .code-saisie{font-family:ui-monospace,Consolas,monospace;font-size:28px;letter-spacing:12px;text-align:center}
 </style>
 </head>
 <body>
@@ -193,9 +197,9 @@ const GRADES = ["Élève sapeur","Sapeur 2CL","Sapeur 1CL","Caporal","Caporal-ch
 
 /* ---------- Droits (les mêmes sont imposés par firestore.rules) ---------- */
 const CLES_MODIFIABLES = {
-  recruteur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier"],
+  recruteur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier","codeFormation"],
   formateur: ["grade","cs","sortie","motifSortie","formations","permis"],
-  recruteur_formateur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier","formations","permis"],
+  recruteur_formateur: ["prenom","nom","discord","tel","matricule","cs","grade","sortie","motifSortie","docs","dossier","formations","permis","codeFormation"],
 };
 const estAdmin = r => r === "responsable" || r === "commandement";   // accès complet
 const peutModifierCle = (role, cle) => estAdmin(role) || (CLES_MODIFIABLES[role] || []).includes(cle);
@@ -211,6 +215,8 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const nomComplet = u => `${u.prenom || ""} ${(u.nom || "").toUpperCase()}`.trim() || "Sans nom";
 const normaliserId = s => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, ".").replace(/[^a-z0-9._-]/g, "");
 const genererMdp = () => { const a = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"; const t = new Uint32Array(10); crypto.getRandomValues(t); return Array.from(t, n => a[n % a.length]).join(""); };
+const genererCode = () => String(crypto.getRandomValues(new Uint32Array(1))[0] % 10000).padStart(4, "0");
+const lienStagiaires = () => location.href.split("#")[0].split("?")[0] + "#stagiaires";
 const getPath = (o, p) => p.split(".").reduce((a, k) => a?.[k], o);
 function setPath(o, p, v){ const k = p.split("."); let c = o; for (let i = 0; i < k.length - 1; i++){ if (typeof c[k[i]] !== "object" || c[k[i]] === null) c[k[i]] = {}; c = c[k[i]]; } c[k.at(-1)] = v; }
 
@@ -266,7 +272,9 @@ function backendDemo(){
   const CLE = "bspp_gprp_v2_comptes", CLE_J = "bspp_gprp_v2_journaux", SESSION = "bspp_gprp_v2_session";
   const lire = (k, def) => { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? def; } catch { return def; } };
   const ecrire = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-  let comptes = lire(CLE, null), journaux = lire(CLE_J, {});
+  const CLE_P = "bspp_gprp_v2_public";
+  let comptes = lire(CLE, null), journaux = lire(CLE_J, {}), pub = lire(CLE_P, { annuaire:{}, stagiaires:{} });
+  const sauverP = () => ecrire(CLE_P, pub);
   if (!Array.isArray(comptes)){
     comptes = [{ id:"demo-responsable", identifiant:"responsable", pwd:"bspp2026", prenom:"Paul", nom:"Morenti", role:"responsable",
       grade:"Caporal", cs:"CS Ménilmontant", matricule:"", actif:true, createdAt:new Date().toISOString(), createdBy:"système" }];
@@ -304,8 +312,18 @@ function backendDemo(){
     },
     async supprimerCompte(id){
       const i = comptes.findIndex(x => x.id === id); if (i < 0) throw new Error("Compte introuvable.");
+      const u = comptes[i];
       comptes.splice(i, 1); delete journaux[id]; sauver(); ecrire(CLE_J, journaux);
+      delete pub.annuaire[id]; if (u.codeFormation) delete pub.stagiaires[`${id}_${u.codeFormation}`]; sauverP();
     },
+    async creerRecrue(data){ const n = { id:"r" + Date.now().toString(36), ...data }; comptes.push(n); sauver(); return n; },
+    async publier(id, annu, cle, snap, ancienne){
+      if (ancienne) delete pub.stagiaires[ancienne];
+      if (annu){ pub.annuaire[id] = annu; pub.stagiaires[cle] = snap; } else { delete pub.annuaire[id]; delete pub.stagiaires[cle]; }
+      sauverP();
+    },
+    async listerAnnuaire(){ return Object.entries(pub.annuaire).map(([id, v]) => ({ id, ...v })); },
+    async lireStagiaire(id, code){ return pub.stagiaires[`${id}_${code}`] || null; },
     async reinitialiserMdp(id, provisoire){
       const u = comptes.find(x => x.id === id); if (!u) throw new Error("Compte introuvable.");
       u.pwd = provisoire; u.mdpProvisoire = true; sauver(); return id;
@@ -397,10 +415,26 @@ async function backendFirebase(cfg){
       const lot = F.writeBatch(db);
       lot.delete(F.doc(db, "users", id));
       lot.delete(F.doc(db, "journaux", id));
-      const m = await F.getDoc(F.doc(db, "identifiants", u.identifiant));
-      if (m.exists() && m.data().uid === id) lot.delete(F.doc(db, "identifiants", u.identifiant));
+      lot.delete(F.doc(db, "annuaire", id));
+      if (u.codeFormation) lot.delete(F.doc(db, "stagiaires", `${id}_${u.codeFormation}`));
+      if (u.identifiant){
+        const m = await F.getDoc(F.doc(db, "identifiants", u.identifiant));
+        if (m.exists() && m.data().uid === id) lot.delete(F.doc(db, "identifiants", u.identifiant));
+      }
       await lot.commit();
     }),
+    // Recrue sans compte de connexion : juste une fiche + un code de formation.
+    creerRecrue: data => essayer(async () => { const r = F.doc(F.collection(db, "users")); await F.setDoc(r, data); return { id:r.id, ...data }; }),
+    // Espace stagiaires public : annuaire (noms) + progression lisible seulement avec le code.
+    publier: (id, annu, cle, snap, ancienne) => essayer(async () => {
+      const lot = F.writeBatch(db);
+      if (ancienne) lot.delete(F.doc(db, "stagiaires", ancienne));
+      if (annu){ lot.set(F.doc(db, "annuaire", id), annu); lot.set(F.doc(db, "stagiaires", cle), snap); }
+      else { lot.delete(F.doc(db, "annuaire", id)); lot.delete(F.doc(db, "stagiaires", cle)); }
+      await lot.commit();
+    }),
+    listerAnnuaire: () => essayer(async () => (await F.getDocs(F.collection(db, "annuaire"))).docs.map(d => ({ id:d.id, ...d.data() }))),
+    lireStagiaire: (id, code) => essayer(async () => { const s = await F.getDoc(F.doc(db, "stagiaires", `${id}_${code}`)); return s.exists() ? s.data() : null; }),
     changerMonMdp: nouveau => essayer(async () => {
       const u = auth.currentUser; if (!u) throw new Error("Session expirée, reconnecte-toi.");
       try { await A.updatePassword(u, nouveau); }
@@ -486,6 +520,7 @@ function vueConnexion(erreur = ""){
       <input id="mdp" type="password" autocomplete="current-password" required>
       ${erreur ? `<div class="erreur">${esc(erreur)}</div>` : ""}
       <button class="btn" type="submit">Se connecter</button>
+      <a class="lien-stag" href="#stagiaires">Tu es stagiaire ? Voir ta progression →</a>
       ${B.mode === "demo" ? `<div class="indice"><b>Mode démo</b> — identifiant <b>responsable</b>, mot de passe <b>bspp2026</b>.</div>` : ""}
     </form>
   </div>`;
@@ -568,7 +603,28 @@ async function accueil(){
 }
 async function recharger(){
   try { comptes = (await B.listerComptes()).filter(c => !c.remplacePar).map(normaliser); afficher(); }
-  catch (e) { document.querySelector("main").innerHTML = `<div class="erreur">${esc(e.message)}</div>`; }
+  catch (e) { document.querySelector("main").innerHTML = `<div class="erreur">${esc(e.message)}</div>`; return; }
+  // Recrues créées avant l'espace stagiaires : on leur donne un code et on les publie.
+  if (!peutModifierCle(moi.role, "codeFormation")) return;
+  for (const c of comptes.filter(c => c.role === "recrue" && c.actif && !c.codeFormation)){
+    try { c.codeFormation = genererCode(); await B.modifierCompte(c.id, { codeFormation:c.codeFormation }); await publierRecrue(c); }
+    catch (e) { console.warn("Code stagiaire", e); }
+  }
+}
+
+/* ---------- Espace stagiaires : ce qui est publié ---------- */
+function instantane(s){
+  return { prenom:s.prenom || "", nom:s.nom || "", grade:s.grade || "", matricule:s.matricule || "", cs:s.cs || "",
+    sortie:!!s.sortie, motifSortie:s.motifSortie || "", docs:clone(s.docs || {}),
+    dossier:{ decision:s.dossier?.decision || "", date:s.dossier?.date || "" },
+    formations:clone(s.formations || {}), permis:clone(s.permis || {}), updatedAt:s.updatedAt || s.createdAt || "" };
+}
+async function publierRecrue(s, ancienCode = null){
+  if (!s.codeFormation) return;
+  const visible = s.role === "recrue" && s.actif !== false;
+  const ancienne = ancienCode && ancienCode !== s.codeFormation ? `${s.id}_${ancienCode}` : null;
+  try { await B.publier(s.id, visible ? { prenom:s.prenom || "", nom:s.nom || "", grade:s.grade || "" } : null, `${s.id}_${s.codeFormation}`, instantane(s), ancienne); }
+  catch (e) { console.warn("Publication stagiaire", e); }
 }
 function afficher(){
   if (fiche) return vueFiche();
@@ -582,6 +638,7 @@ function vueSuivi(){
   $app.innerHTML = entete() + `
   <main>
     <div class="barre"><h2>Suivi des recrues</h2><div class="esp"></div>
+      <button class="btn sec" id="b-lien-stag">Copier le lien stagiaires</button>
       ${rolesCreables(moi.role).includes("recrue") ? `<button class="btn" id="b-nouvelle">+ Nouvelle recrue</button>` : ""}</div>
     <div class="etapes">
       <button class="etape ${filtre.etape === "" ? "on" : ""}" data-etape=""><div class="n">${recrues.length}</div><div class="l">Toutes</div></button>
@@ -600,6 +657,9 @@ function vueSuivi(){
   document.getElementById("q").oninput = e => { filtre.q = e.target.value; remplirSuivi(); };
   $app.querySelectorAll("[data-etape]").forEach(b => b.onclick = () => { filtre.etape = b.dataset.etape; vueSuivi(); });
   const bn = document.getElementById("b-nouvelle"); if (bn) bn.onclick = () => fenetreCompte(null, "recrue");
+  document.getElementById("b-lien-stag").onclick = async e => {
+    try { await navigator.clipboard.writeText(lienStagiaires()); e.target.textContent = "Lien copié ✓"; } catch { e.target.textContent = lienStagiaires(); }
+  };
 }
 function remplirSuivi(){
   const q = filtre.q.trim().toLowerCase(), ordre = Object.fromEntries(ETAPES.map(([k], i) => [k, i]));
@@ -666,7 +726,9 @@ function vueFiche(){
       <button class="btn sec petit" id="b-retour">← Retour</button>
       <h2>${esc(nomComplet(s))}</h2>
       <span class="badge e-${et}" id="badge-etape">${esc(NOM_ETAPE[et])}</span>
-      <span class="sous">${esc(s.identifiant)}</span>
+      ${s.identifiant ? `<span class="sous">${esc(s.identifiant)}</span>` : ""}
+      ${s.codeFormation ? `<span class="code-stag">Code stagiaire : <b>${esc(s.codeFormation)}</b></span>` : ""}
+      ${peutModifierCle(moi.role, "codeFormation") ? `<button class="btn sec petit" id="b-code">${s.codeFormation ? "Nouveau code" : "Créer un code"}</button>` : ""}
       <div class="esp"></div>
       <div class="prog" style="min-width:180px" id="prog-fiche"><div class="b"><i style="width:${p}%"></i></div><span>${p} %</span></div>
     </div>
@@ -784,6 +846,20 @@ function brancherFiche(){
     try { await B.ecrireJournal(fiche.id, entrees); fiche.journal = entrees; vueFiche(); } catch (e) { fiche.msg = "Échec : " + e.message; majEtat(); }
   });
   const bs = document.getElementById("b-sauver"); if (bs) bs.onclick = enregistrerFiche;
+  const bc = document.getElementById("b-code");
+  if (bc) bc.onclick = async () => {
+    if (fiche.brouillon.codeFormation && !bc.dataset.ok){ bc.dataset.ok = "1"; bc.textContent = "Confirmer : l'ancien code ne marchera plus"; return; }
+    bc.disabled = true;
+    const ancien = fiche.origine.codeFormation, code = genererCode();
+    try {
+      await B.modifierCompte(fiche.id, { codeFormation:code, updatedAt:new Date().toISOString(), updatedBy:nomComplet(moi) });
+      fiche.origine.codeFormation = code; fiche.brouillon.codeFormation = code;
+      const c = comptes.find(c => c.id === fiche.id); if (c) c.codeFormation = code;
+      await publierRecrue({ ...fiche.origine, id:fiche.id }, ancien);
+      fiche.msg = `Nouveau code : ${code}`;
+    } catch (e) { fiche.msg = "Échec : " + e.message; }
+    vueFiche();
+  };
 }
 
 async function enregistrerFiche(){
@@ -803,6 +879,7 @@ async function enregistrerFiche(){
     Object.assign(fiche.brouillon, clone(patch));
     fiche.origine = clone(fiche.brouillon);
     const i = comptes.findIndex(c => c.id === fiche.id); if (i >= 0) comptes[i] = clone(fiche.brouillon);
+    await publierRecrue({ ...fiche.brouillon, id:fiche.id });
     fiche.msg = "Enregistré ✓";
   } catch (e) { fiche.modifie = true; fiche.msg = "Échec de l'enregistrement : " + e.message; }
   fiche.enreg = false; vueFiche();
@@ -848,7 +925,7 @@ function remplirComptes(){
   corps.innerHTML = liste.map(c => `
     <tr class="${c.actif ? "" : "inactif"}">
       <td><b>${esc(nomComplet(c))}</b>${c.matricule ? `<div class="sous">Mle ${esc(c.matricule)}</div>` : ""}</td>
-      <td>${esc(c.identifiant)}</td>
+      <td>${c.identifiant ? esc(c.identifiant) : c.codeFormation ? `<span class="sous">Sans compte · code ${esc(c.codeFormation)}</span>` : "—"}</td>
       <td><span class="badge r-${esc(c.role)}">${esc(ROLES[c.role] || c.role)}</span></td>
       <td>${esc(c.grade || "—")}</td><td>${esc(c.cs || "—")}</td>
       <td>${c.actif ? `<span class="s-actif">Actif</span>` : `<span class="s-inactif">Désactivé</span>`}</td>
@@ -873,15 +950,16 @@ function fenetreCompte(existant = null, roleImpose = null){
       <div><label class="l">Prénom</label><input name="prenom" required value="${esc(v.prenom)}"></div>
       <div><label class="l">Nom</label><input name="nom" required value="${esc(v.nom)}"></div>
       ${edition ? "" : `
-      <div><label class="l">Identifiant de connexion</label><input name="identifiant" required placeholder="prenom.nom"></div>
-      <div><label class="l">Mot de passe provisoire</label><div class="ligne-mdp"><input name="mdp" required minlength="6" value="${genererMdp()}"><button type="button" class="btn sec petit" id="b-gen" aria-label="Nouveau mot de passe">↻</button></div></div>`}
+      <div data-acces><label class="l">Identifiant de connexion</label><input name="identifiant" required placeholder="prenom.nom"></div>
+      <div data-acces><label class="l">Mot de passe provisoire</label><div class="ligne-mdp"><input name="mdp" required minlength="6" value="${genererMdp()}"><button type="button" class="btn sec petit" id="b-gen" aria-label="Nouveau mot de passe">↻</button></div></div>
+      <div data-sans-acces style="grid-column:1/-1" class="sous">Pas de compte pour une recrue : un code de formation à 4 chiffres lui sera donné pour voir sa progression dans l'espace stagiaires.</div>`}
       <div><label class="l">Rôle</label><select name="role" ${soiMeme || roles.length === 1 ? "disabled" : ""}>${roles.map(r => `<option value="${r}" ${v.role === r ? "selected" : ""}>${ROLES[r]}</option>`).join("")}</select></div>
       <div><label class="l">Grade</label><select name="grade">${GRADES.map(g => `<option ${v.grade === g ? "selected" : ""}>${g}</option>`).join("")}</select></div>
       <div><label class="l">Matricule (facultatif)</label><input name="matricule" value="${esc(v.matricule)}"></div>
       <div><label class="l">Affectation (CS)</label><input name="cs" placeholder="ex. CS Ménilmontant" value="${esc(v.cs)}"></div>
-      ${edition && !soiMeme && estAdmin(moi.role) ? `<div style="grid-column:1/-1"><label class="l">Mot de passe</label>
+      ${edition && !soiMeme && estAdmin(moi.role) ? `${existant.identifiant ? `<div style="grid-column:1/-1"><label class="l">Mot de passe</label>
         <button type="button" class="btn sec" id="b-reinit">Réinitialiser avec un mot de passe provisoire</button>
-        <div class="sous" style="margin-top:6px">La personne devra choisir un nouveau mot de passe à sa prochaine connexion.</div></div>
+        <div class="sous" style="margin-top:6px">La personne devra choisir un nouveau mot de passe à sa prochaine connexion.</div></div>` : ""}
       <div style="grid-column:1/-1;margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)"><label class="l">Zone dangereuse</label>
         <button type="button" class="btn danger" id="b-supprimer">Supprimer définitivement ce compte</button>
         <div class="sous" style="margin-top:6px">Supprime le compte, sa fiche de suivi et son journal. Pour garder l'historique, préfère « Désactivé ».</div></div>` : ""}
@@ -933,6 +1011,14 @@ function fenetreCompte(existant = null, roleImpose = null){
     f.prenom.oninput = auto; f.nom.oninput = auto;
     f.identifiant.oninput = () => { f.identifiant.dataset.touche = "1"; };
     voile.querySelector("#b-gen").onclick = () => { f.mdp.value = genererMdp(); };
+    const majAcces = () => {
+      const recrue = (f.role.value || roles[0]) === "recrue";
+      voile.querySelectorAll("[data-acces]").forEach(d => d.hidden = recrue);
+      voile.querySelectorAll("[data-sans-acces]").forEach(d => d.hidden = !recrue);
+      f.identifiant.required = !recrue; f.mdp.required = !recrue;
+    };
+    f.role.onchange = () => { if (f.role.value === "recrue") f.grade.value = GRADE_ENTREE; majAcces(); };
+    majAcces();
   }
   f.onsubmit = async ev => {
     ev.preventDefault();
@@ -944,9 +1030,31 @@ function fenetreCompte(existant = null, roleImpose = null){
       if (edition){
         if (f.actif) data.actif = f.actif.value === "1";
         data.updatedAt = new Date().toISOString(); data.updatedBy = nomComplet(moi);
+        const avaitCode = existant.codeFormation;
         await B.modifierCompte(existant.id, data);
         Object.assign(existant, data); if (soiMeme) Object.assign(moi, data);
+        if (avaitCode) await publierRecrue(existant);
         fermer(); afficher();
+      } else if (data.role === "recrue"){
+        if (!rolesCreables(moi.role).includes("recrue")) throw new Error("Ton rôle ne permet pas de créer une recrue.");
+        const complet = { ...ficheVierge(), ...data, actif:true, codeFormation:genererCode(), createdAt:new Date().toISOString(), createdBy:nomComplet(moi) };
+        const nouveau = normaliser(await B.creerRecrue(complet));
+        comptes.push(nouveau);
+        await publierRecrue(nouveau);
+        const texte = `Code de formation : ${nouveau.codeFormation}\nEspace stagiaires : ${lienStagiaires()}`;
+        f.innerHTML = `
+          <h3>Recrue ajoutée</h3>
+          <div class="ok">${esc(nomComplet(nouveau))} · ${esc(nouveau.grade)}</div>
+          <p style="margin:14px 0 0">Donne ce code à la recrue : elle clique sur son nom dans l'espace stagiaires et le tape pour voir sa progression.</p>
+          <div class="identifiants">${esc(texte)}</div>
+          <div class="actions">
+            <button type="button" class="btn sec" id="b-copier">Copier</button>
+            <button type="button" class="btn sec" id="b-ouvrir">Ouvrir sa fiche</button>
+            <button type="button" class="btn" id="b-fin">Terminé</button>
+          </div>`;
+        f.querySelector("#b-copier").onclick = async e => { try { await navigator.clipboard.writeText(texte); e.target.textContent = "Copié ✓"; } catch { e.target.textContent = "Sélectionne et copie"; } };
+        f.querySelector("#b-fin").onclick = () => { fermer(); afficher(); };
+        f.querySelector("#b-ouvrir").onclick = () => { fermer(); onglet = "suivi"; ouvrirFiche(nouveau.id); };
       } else {
         const ident = normaliserId(f.identifiant.value);
         if (!ident) throw new Error("Identifiant invalide.");
@@ -976,13 +1084,15 @@ function fenetreCompte(existant = null, roleImpose = null){
 }
 
 /* ---------- Vue RECRUE (lecture seule) ---------- */
-function vueRecrue(){
-  const s = normaliser(moi), p = progression(s), et = etapeDe(s);
+function vueRecrue(){ $app.innerHTML = entete() + htmlProgression(normaliser(moi), "Ma progression"); brancherEntete(); }
+function htmlProgression(s, titre, retour = ""){
+  const p = progression(s), et = etapeDe(s);
   const pastille = (ok, txt, d) => `<li><span class="pastille ${ok ? "oui" : ""}">${ok ? "✓" : ""}</span><span style="flex:1">${esc(txt)}</span><span class="sous">${d ? dateFr(d) : ""}</span></li>`;
-  $app.innerHTML = entete() + `
+  return `
   <main>
     <div class="entete-fiche">
-      <h2>Ma progression</h2>
+      ${retour}
+      <h2>${esc(titre)}</h2>
       <span class="badge e-${et}">${esc(NOM_ETAPE[et])}</span>
       <div class="esp"></div>
       <div class="prog" style="min-width:200px"><div class="b"><i style="width:${p}%"></i></div><span>${p} %</span></div>
@@ -1012,13 +1122,92 @@ function vueRecrue(){
       </div>
     </div>
   </main>`;
-  brancherEntete();
+}
+
+/* ---------- ESPACE STAGIAIRES (sans compte, code à 4 chiffres) ---------- */
+const enteteStag = () => `
+  ${B.mode === "demo" ? `<div class="demo">Mode démo : données enregistrées uniquement dans ce navigateur.</div>` : ""}
+  <header class="top">
+    <div class="titre">BSPP · GPRP<small>Espace stagiaires</small></div>
+    <div class="esp"></div>
+    <a class="btn petit" href="#" id="b-encadrement">Encadrement</a>
+  </header>`;
+let stag = { liste:[], q:"", essais:0, bloqueJusqua:0 };
+async function vueStagiaires(){
+  $app.innerHTML = enteteStag() + `<main><div class="vide">Chargement…</div></main>`;
+  try { stag.liste = (await B.listerAnnuaire()).sort((a, b) => nomComplet(a).localeCompare(nomComplet(b), "fr")); }
+  catch (e) { document.querySelector("main").innerHTML = `<div class="erreur">${esc(e.message)}</div>`; return; }
+  $app.innerHTML = enteteStag() + `
+  <main>
+    <div class="barre"><h2>Espace stagiaires</h2></div>
+    <p class="sous" style="margin-top:-6px">Clique sur ton nom puis entre ton code de formation à 4 chiffres (donné par ton recruteur).</p>
+    <div class="carte">
+      <div class="barre"><input id="q" placeholder="Rechercher ton nom…" value="${esc(stag.q)}"></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Nom</th><th>Grade</th></tr></thead>
+        <tbody id="corps"></tbody>
+      </table></div>
+    </div>
+  </main>`;
+  const remplir = () => {
+    const q = stag.q.trim().toLowerCase();
+    const l = stag.liste.filter(x => !q || `${x.prenom} ${x.nom}`.toLowerCase().includes(q));
+    const corps = document.getElementById("corps");
+    corps.innerHTML = l.length ? l.map(x => `<tr class="cliquable" data-id="${esc(x.id)}"><td><b>${esc(nomComplet(x))}</b></td><td>${esc(x.grade || "—")}</td></tr>`).join("")
+      : `<tr><td colspan="2" class="vide">Aucune recrue.</td></tr>`;
+    corps.querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = () => fenetreCode(stag.liste.find(x => x.id === tr.dataset.id)));
+  };
+  remplir();
+  document.getElementById("q").oninput = e => { stag.q = e.target.value; remplir(); };
+}
+function fenetreCode(x){
+  const voile = document.createElement("div");
+  voile.className = "voile";
+  voile.innerHTML = `
+  <form class="fenetre" style="max-width:380px">
+    <h3>${esc(nomComplet(x))}</h3>
+    <div class="sous" style="font-size:14px">Entre ton code de formation</div>
+    <input name="code" class="code-saisie" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" required placeholder="••••" style="margin-top:14px">
+    <div id="msg"></div>
+    <div class="actions"><button type="button" class="btn sec" id="b-annuler">Annuler</button><button type="submit" class="btn">Voir ma progression</button></div>
+  </form>`;
+  document.body.appendChild(voile);
+  const f = voile.querySelector("form"), fermer = () => voile.remove(), msg = voile.querySelector("#msg");
+  f.code.focus();
+  f.code.oninput = () => { f.code.value = f.code.value.replace(/\D/g, "").slice(0, 4); };
+  voile.querySelector("#b-annuler").onclick = fermer;
+  voile.onclick = e => { if (e.target === voile) fermer(); };
+  f.onsubmit = async ev => {
+    ev.preventDefault(); msg.innerHTML = "";
+    const code = f.code.value;
+    if (Date.now() < stag.bloqueJusqua) return msg.innerHTML = `<div class="erreur">Trop d'essais. Attends ${Math.ceil((stag.bloqueJusqua - Date.now()) / 1000)} s.</div>`;
+    if (!/^\d{4}$/.test(code)) return msg.innerHTML = `<div class="erreur">Le code fait 4 chiffres.</div>`;
+    const btn = f.querySelector("button[type=submit]"); btn.disabled = true;
+    try {
+      const s = await B.lireStagiaire(x.id, code);
+      if (!s){
+        stag.essais++; if (stag.essais >= 5){ stag.essais = 0; stag.bloqueJusqua = Date.now() + 30000; }
+        f.code.value = ""; f.code.focus(); btn.disabled = false;
+        return msg.innerHTML = `<div class="erreur">Code incorrect.</div>`;
+      }
+      stag.essais = 0; fermer();
+      $app.innerHTML = enteteStag() + htmlProgression(normaliser(s), nomComplet(s), `<button class="btn sec petit" id="b-retour">← Liste</button>`);
+      document.getElementById("b-retour").onclick = () => vueStagiaires();
+      window.scrollTo(0, 0);
+    } catch (e) { msg.innerHTML = `<div class="erreur">${esc(e.message)}</div>`; btn.disabled = false; }
+  };
 }
 
 /* ---------- Démarrage ---------- */
 (async () => {
   try {
     B = FIREBASE_CONFIG ? await backendFirebase(FIREBASE_CONFIG) : backendDemo();
+    window.addEventListener("hashchange", async () => {
+      if (location.hash === "#stagiaires") return vueStagiaires();
+      document.querySelectorAll(".voile").forEach(v => v.remove());
+      moi = moi || await B.courant(); moi ? await accueil() : vueConnexion();
+    });
+    if (location.hash === "#stagiaires") return vueStagiaires();
     if (B.mode === "firebase" && await B.estVide()) return vueInstallation();
     moi = await B.courant();
     moi ? await accueil() : vueConnexion();

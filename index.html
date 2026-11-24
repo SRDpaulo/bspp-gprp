@@ -296,7 +296,19 @@ function backendDemo(){
     },
     async modifierCompte(id, patch){
       const i = comptes.findIndex(x => x.id === id); if (i < 0) throw new Error("Compte introuvable.");
-      const { mdp, ...reste } = patch; comptes[i] = { ...comptes[i], ...reste, ...(mdp ? { pwd:mdp } : {}) }; sauver();
+      comptes[i] = { ...comptes[i], ...patch }; sauver();
+    },
+    async changerMonMdp(nouveau){
+      const u = comptes.find(x => x.id === lireS()); if (!u) throw new Error("Session expirée, reconnecte-toi.");
+      u.pwd = nouveau; u.mdpProvisoire = false; sauver();
+    },
+    async supprimerCompte(id){
+      const i = comptes.findIndex(x => x.id === id); if (i < 0) throw new Error("Compte introuvable.");
+      comptes.splice(i, 1); delete journaux[id]; sauver(); ecrire(CLE_J, journaux);
+    },
+    async reinitialiserMdp(id, provisoire){
+      const u = comptes.find(x => x.id === id); if (!u) throw new Error("Compte introuvable.");
+      u.pwd = provisoire; u.mdpProvisoire = true; sauver(); return id;
     },
     async lireJournal(id){ return journaux[id] || []; },
     async ecrireJournal(id, entrees){ journaux[id] = entrees; ecrire(CLE_J, journaux); },
@@ -326,7 +338,6 @@ async function backendFirebase(cfg){
   const profil = async uid => { const s = await F.getDoc(F.doc(db, "users", uid)); return s.exists() ? { id:uid, ...s.data() } : null; };
   return {
     mode:"firebase",
-    peutChangerMdpAutrui: false,
     estVide: () => essayer(async () => !(await F.getDoc(F.doc(db, "config", "installation"))).exists()),
     installer: (data, pwd) => essayer(async () => {
       const cred = await A.createUserWithEmailAndPassword(auth, versEmail(data.identifiant), pwd);
@@ -334,6 +345,7 @@ async function backendFirebase(cfg){
       const lot = F.writeBatch(db);
       lot.set(F.doc(db, "users", cred.user.uid), u);
       lot.set(F.doc(db, "config", "installation"), { par:cred.user.uid, le:new Date().toISOString() });
+      lot.set(F.doc(db, "identifiants", data.identifiant), { email:versEmail(data.identifiant), uid:cred.user.uid });
       await lot.commit();
       return { id:cred.user.uid, ...u };
     }),
@@ -345,27 +357,73 @@ async function backendFirebase(cfg){
       return p;
     },
     async connexion(ident, pwd){
-      const cred = await essayer(() => A.signInWithEmailAndPassword(auth, versEmail(ident), pwd));
+      // L'identifiant peut pointer vers un nouvel accès après une réinitialisation de mot de passe.
+      let email = versEmail(ident), mappe = false;
+      try { const m = await F.getDoc(F.doc(db, "identifiants", normaliserId(ident))); if (m.exists() && m.data().email){ email = m.data().email; mappe = true; } } catch {}
+      const cred = await essayer(() => A.signInWithEmailAndPassword(auth, email, pwd));
       const p = await profil(cred.user.uid);
       if (!p){ await A.signOut(auth); throw new Error("Compte sans fiche. Contacte le responsable recrutement."); }
       if (!p.actif){ await A.signOut(auth); throw new Error("Ce compte est désactivé. Contacte le responsable recrutement."); }
+      // Compte créé avant la table des identifiants : on réserve son identifiant.
+      if (!mappe) try { await F.setDoc(F.doc(db, "identifiants", p.identifiant), { email, uid:cred.user.uid }); } catch {}
       return p;
     },
     async deconnexion(){ await A.signOut(auth); },
     listerComptes: () => essayer(async () => (await F.getDocs(F.collection(db, "users"))).docs.map(d => ({ id:d.id, ...d.data() }))),
     creerCompte: (data, pwd) => essayer(async () => {
-      const cred = await A.createUserWithEmailAndPassword(authSecondaire, versEmail(data.identifiant), pwd);
+      // Identifiant déjà pris par un compte existant ?
+      const pris = await F.getDocs(F.query(F.collection(db, "users"), F.where("identifiant", "==", data.identifiant), F.where("actif", "==", true)));
+      if (!pris.empty || (await F.getDoc(F.doc(db, "identifiants", data.identifiant))).exists()) throw new Error("Cet identifiant existe déjà.");
+      let email = versEmail(data.identifiant), cred;
+      try { cred = await A.createUserWithEmailAndPassword(authSecondaire, email, pwd); }
+      catch (e) {
+        // Identifiant libéré par une suppression : l'ancien accès Firebase existe encore, on en crée un autre.
+        if (!(e?.code || "").includes("email-already-in-use")) throw e;
+        email = `${data.identifiant}.c${Date.now().toString(36)}@${DOMAINE_IDENTIFIANT}`;
+        cred = await A.createUserWithEmailAndPassword(authSecondaire, email, pwd);
+      }
       await A.signOut(authSecondaire);
-      await F.setDoc(F.doc(db, "users", cred.user.uid), data);
+      const lot = F.writeBatch(db);
+      lot.set(F.doc(db, "users", cred.user.uid), data);
+      lot.set(F.doc(db, "identifiants", data.identifiant), { email, uid:cred.user.uid });
+      await lot.commit();
       return { id:cred.user.uid, ...data };
     }),
-    modifierCompte: (id, patch) => essayer(async () => {
-      const { mdp, ...reste } = patch;
-      if (mdp){
-        if (id !== auth.currentUser?.uid) throw new Error("Avec Firebase, seul le titulaire peut changer son mot de passe (README).");
-        await A.updatePassword(auth.currentUser, mdp);
-      }
-      if (Object.keys(reste).length) await F.updateDoc(F.doc(db, "users", id), reste);
+    modifierCompte: (id, patch) => essayer(() => F.updateDoc(F.doc(db, "users", id), patch)),
+    // Supprime la fiche, le journal et l'identifiant. L'accès Firebase reste mais ne mène plus à rien
+    // (Firebase gratuit ne permet pas de supprimer l'accès d'autrui depuis le site).
+    supprimerCompte: id => essayer(async () => {
+      const u = await profil(id); if (!u) throw new Error("Compte introuvable.");
+      const lot = F.writeBatch(db);
+      lot.delete(F.doc(db, "users", id));
+      lot.delete(F.doc(db, "journaux", id));
+      const m = await F.getDoc(F.doc(db, "identifiants", u.identifiant));
+      if (m.exists() && m.data().uid === id) lot.delete(F.doc(db, "identifiants", u.identifiant));
+      await lot.commit();
+    }),
+    changerMonMdp: nouveau => essayer(async () => {
+      const u = auth.currentUser; if (!u) throw new Error("Session expirée, reconnecte-toi.");
+      try { await A.updatePassword(u, nouveau); }
+      catch (e) { if ((e?.code || "").includes("requires-recent-login")) throw new Error("Par sécurité, déconnecte-toi puis reconnecte-toi avant de changer ton mot de passe."); throw e; }
+      await F.updateDoc(F.doc(db, "users", u.uid), { mdpProvisoire:false, updatedAt:new Date().toISOString() });
+    }),
+    // Firebase gratuit ne permet pas de changer le mot de passe d'autrui : on crée un nouvel accès
+    // avec le mot de passe provisoire, on y recopie la fiche et le journal, et l'ancien accès est fermé.
+    reinitialiserMdp: (id, provisoire) => essayer(async () => {
+      const ancien = await profil(id); if (!ancien) throw new Error("Compte introuvable.");
+      const email = `${ancien.identifiant}.r${Date.now().toString(36)}@${DOMAINE_IDENTIFIANT}`;
+      const cred = await A.createUserWithEmailAndPassword(authSecondaire, email, provisoire);
+      await A.signOut(authSecondaire);
+      const nouvelId = cred.user.uid, maintenant = new Date().toISOString();
+      const { id:_, ...donnees } = ancien;
+      const jour = await F.getDoc(F.doc(db, "journaux", id));
+      const lot = F.writeBatch(db);
+      lot.set(F.doc(db, "users", nouvelId), { ...donnees, actif:true, mdpProvisoire:true, updatedAt:maintenant });
+      lot.update(F.doc(db, "users", id), { actif:false, remplacePar:nouvelId, updatedAt:maintenant });
+      lot.set(F.doc(db, "identifiants", ancien.identifiant), { email, uid:nouvelId });
+      if (jour.exists()) lot.set(F.doc(db, "journaux", nouvelId), jour.data());
+      await lot.commit();
+      return nouvelId;
     }),
     lireJournal: id => essayer(async () => { const s = await F.getDoc(F.doc(db, "journaux", id)); return s.exists() ? (s.data().entrees || []) : []; }),
     ecrireJournal: (id, entrees) => essayer(() => F.setDoc(F.doc(db, "journaux", id), { entrees })),
@@ -452,10 +510,12 @@ function entete(){
     ${ong}
     <div class="esp"></div>
     <div class="moi">${esc((moi.grade ? moi.grade + " " : "") + nomComplet(moi))}<br><span style="opacity:.7">${esc(ROLES[moi.role] || moi.role)}</span></div>
+    <button class="btn petit" id="b-mdp">Mot de passe</button>
     <button class="btn petit" id="b-deco">Déconnexion</button>
   </header>`;
 }
 function brancherEntete(){
+  document.getElementById("b-mdp").onclick = () => { if (fiche?.modifie) return; fiche = null; vueChangerMdp(); };
   document.getElementById("b-deco").onclick = async () => { await B.deconnexion(); moi = null; fiche = null; onglet = "suivi"; filtre = { etape:"", q:"", role:"" }; vueConnexion(); };
   document.querySelectorAll("[data-onglet]").forEach(b => b.onclick = () => {
     if (fiche?.modifie && !confirmerQuitter(b)) return;
@@ -467,14 +527,47 @@ function confirmerQuitter(btn){
   btn.dataset.ok = "1"; btn.textContent = "Quitter sans enregistrer ?"; return false;
 }
 
+/* ---------- Changement de mot de passe (provisoire ou volontaire) ---------- */
+function vueChangerMdp(erreur = ""){
+  const oblig = !!moi.mdpProvisoire;
+  $app.innerHTML = `
+  <div class="login-wrap">
+    <form class="login" id="f-mdp">
+      <div class="blason">BSPP</div>
+      <h1>${oblig ? "Choisis ton mot de passe" : "Changer mon mot de passe"}</h1>
+      <p class="st">${oblig ? `Bienvenue ${esc(moi.prenom || "")} ! Ton mot de passe actuel est provisoire : choisis-en un nouveau pour continuer.` : esc(nomComplet(moi))}</p>
+      <label class="l">Nouveau mot de passe (6 caractères min.)</label>
+      <input id="mdp1" type="password" minlength="6" required autocomplete="new-password">
+      <label class="l">Confirme le mot de passe</label>
+      <input id="mdp2" type="password" minlength="6" required autocomplete="new-password">
+      ${erreur ? `<div class="erreur">${esc(erreur)}</div>` : ""}
+      <button class="btn" type="submit">Enregistrer</button>
+      <button class="btn sec" type="button" id="b-annuler-mdp" style="margin-top:8px">${oblig ? "Se déconnecter" : "Annuler"}</button>
+    </form>
+  </div>`;
+  document.getElementById("b-annuler-mdp").onclick = async () => {
+    if (oblig){ await B.deconnexion(); moi = null; vueConnexion(); } else accueil();
+  };
+  document.getElementById("f-mdp").onsubmit = async ev => {
+    ev.preventDefault();
+    const a = document.getElementById("mdp1").value, b = document.getElementById("mdp2").value;
+    if (a.length < 6) return vueChangerMdp("Mot de passe trop court (6 caractères minimum).");
+    if (a !== b) return vueChangerMdp("Les deux mots de passe ne sont pas identiques.");
+    const btn = ev.target.querySelector("button[type=submit]"); btn.disabled = true; btn.textContent = "Enregistrement…";
+    try { await B.changerMonMdp(a); moi.mdpProvisoire = false; await accueil(); }
+    catch (e) { vueChangerMdp(e.message); }
+  };
+}
+
 async function accueil(){
+  if (moi.mdpProvisoire) return vueChangerMdp();
   if (moi.role === "recrue"){ vueRecrue(); return; }
   $app.innerHTML = entete() + `<main><div class="vide">Chargement…</div></main>`;
   brancherEntete();
   await recharger();
 }
 async function recharger(){
-  try { comptes = (await B.listerComptes()).map(normaliser); afficher(); }
+  try { comptes = (await B.listerComptes()).filter(c => !c.remplacePar).map(normaliser); afficher(); }
   catch (e) { document.querySelector("main").innerHTML = `<div class="erreur">${esc(e.message)}</div>`; }
 }
 function afficher(){
@@ -786,7 +879,12 @@ function fenetreCompte(existant = null, roleImpose = null){
       <div><label class="l">Grade</label><select name="grade">${GRADES.map(g => `<option ${v.grade === g ? "selected" : ""}>${g}</option>`).join("")}</select></div>
       <div><label class="l">Matricule (facultatif)</label><input name="matricule" value="${esc(v.matricule)}"></div>
       <div><label class="l">Affectation (CS)</label><input name="cs" placeholder="ex. CS Ménilmontant" value="${esc(v.cs)}"></div>
-      ${edition && (B.peutChangerMdpAutrui !== false || soiMeme) ? `<div style="grid-column:1/-1"><label class="l">Nouveau mot de passe (laisser vide pour ne pas changer)</label><input name="nouveauMdp" minlength="6" autocomplete="new-password"></div>` : ""}
+      ${edition && !soiMeme && estAdmin(moi.role) ? `<div style="grid-column:1/-1"><label class="l">Mot de passe</label>
+        <button type="button" class="btn sec" id="b-reinit">Réinitialiser avec un mot de passe provisoire</button>
+        <div class="sous" style="margin-top:6px">La personne devra choisir un nouveau mot de passe à sa prochaine connexion.</div></div>
+      <div style="grid-column:1/-1;margin-top:14px;padding-top:12px;border-top:1px solid var(--bord)"><label class="l">Zone dangereuse</label>
+        <button type="button" class="btn danger" id="b-supprimer">Supprimer définitivement ce compte</button>
+        <div class="sous" style="margin-top:6px">Supprime le compte, sa fiche de suivi et son journal. Pour garder l'historique, préfère « Désactivé ».</div></div>` : ""}
       ${edition && !soiMeme ? `<div style="grid-column:1/-1"><label class="l">Statut</label><select name="actif"><option value="1" ${existant.actif ? "selected" : ""}>Actif</option><option value="0" ${existant.actif ? "" : "selected"}>Désactivé (ne peut plus se connecter)</option></select></div>` : ""}
     </div>
     <div id="msg"></div>
@@ -795,6 +893,40 @@ function fenetreCompte(existant = null, roleImpose = null){
   document.body.appendChild(voile);
   const f = voile.querySelector("form"), fermer = () => voile.remove();
   voile.querySelector("#b-annuler").onclick = fermer;
+  const bSuppr = voile.querySelector("#b-supprimer");
+  if (bSuppr) bSuppr.onclick = async () => {
+    if (!bSuppr.dataset.ok){ bSuppr.dataset.ok = "1"; bSuppr.textContent = `Confirmer : supprimer ${nomComplet(existant)} ?`; bSuppr.className = "btn"; return; }
+    bSuppr.disabled = true; bSuppr.textContent = "Suppression…";
+    try { await B.supprimerCompte(existant.id); fermer(); fiche = null; await recharger(); }
+    catch (e) {
+      bSuppr.disabled = false; bSuppr.textContent = "Supprimer définitivement ce compte"; bSuppr.className = "btn danger"; delete bSuppr.dataset.ok;
+      voile.querySelector("#msg").innerHTML = `<div class="erreur">${esc(e.message)}</div>`;
+    }
+  };
+  const bReinit = voile.querySelector("#b-reinit");
+  if (bReinit) bReinit.onclick = async () => {
+    if (!bReinit.dataset.ok){ bReinit.dataset.ok = "1"; bReinit.textContent = "Confirmer la réinitialisation ?"; bReinit.className = "btn"; return; }
+    bReinit.disabled = true; bReinit.textContent = "Réinitialisation…";
+    const provisoire = genererMdp();
+    try {
+      await B.reinitialiserMdp(existant.id, provisoire);
+      const texte = `Identifiant : ${existant.identifiant}\nMot de passe provisoire : ${provisoire}\nSite : ${location.href.split("#")[0]}`;
+      f.innerHTML = `
+        <h3>Mot de passe réinitialisé</h3>
+        <div class="ok">${esc(nomComplet(existant))} · ${esc(ROLES[existant.role] || existant.role)}</div>
+        <p style="margin:14px 0 0">Donne ces identifiants à la personne. Elle devra choisir un nouveau mot de passe en se connectant.</p>
+        <div class="identifiants">${esc(texte)}</div>
+        <div class="actions">
+          <button type="button" class="btn sec" id="b-copier">Copier</button>
+          <button type="button" class="btn" id="b-fin">Terminé</button>
+        </div>`;
+      f.querySelector("#b-copier").onclick = async e => { try { await navigator.clipboard.writeText(texte); e.target.textContent = "Copié ✓"; } catch { e.target.textContent = "Sélectionne et copie"; } };
+      f.querySelector("#b-fin").onclick = async () => { fermer(); fiche = null; await recharger(); };
+    } catch (e) {
+      bReinit.disabled = false; bReinit.textContent = "Réinitialiser avec un mot de passe provisoire"; delete bReinit.dataset.ok;
+      voile.querySelector("#msg").innerHTML = `<div class="erreur">${esc(e.message)}</div>`;
+    }
+  };
   voile.onclick = e => { if (e.target === voile) fermer(); };
   if (!edition){
     const auto = () => { if (!f.identifiant.dataset.touche) f.identifiant.value = normaliserId(`${f.prenom.value}.${f.nom.value}`.replace(/^\.|\.$/g, "")); };
@@ -812,9 +944,7 @@ function fenetreCompte(existant = null, roleImpose = null){
       if (edition){
         if (f.actif) data.actif = f.actif.value === "1";
         data.updatedAt = new Date().toISOString(); data.updatedBy = nomComplet(moi);
-        const nouveauMdp = f.nouveauMdp ? f.nouveauMdp.value : "";
-        if (nouveauMdp && nouveauMdp.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum).");
-        await B.modifierCompte(existant.id, nouveauMdp ? { ...data, mdp:nouveauMdp } : data);
+        await B.modifierCompte(existant.id, data);
         Object.assign(existant, data); if (soiMeme) Object.assign(moi, data);
         fermer(); afficher();
       } else {
@@ -822,7 +952,7 @@ function fenetreCompte(existant = null, roleImpose = null){
         if (!ident) throw new Error("Identifiant invalide.");
         if (f.mdp.value.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum).");
         if (!rolesCreables(moi.role).includes(data.role)) throw new Error("Ton rôle ne permet pas de créer ce type de compte.");
-        const complet = { ...(data.role === "recrue" ? ficheVierge() : {}), ...data, identifiant:ident, actif:true,
+        const complet = { ...(data.role === "recrue" ? ficheVierge() : {}), ...data, identifiant:ident, actif:true, mdpProvisoire:true,
           createdAt:new Date().toISOString(), createdBy:nomComplet(moi) };
         const nouveau = normaliser(await B.creerCompte(complet, f.mdp.value));
         comptes.push(nouveau);
@@ -830,7 +960,7 @@ function fenetreCompte(existant = null, roleImpose = null){
         f.innerHTML = `
           <h3>Compte créé</h3>
           <div class="ok">${esc(nomComplet(nouveau))} · ${esc(ROLES[nouveau.role])}</div>
-          <p style="margin:14px 0 0">Donne ces identifiants à la personne :</p>
+          <p style="margin:14px 0 0">Donne ces identifiants à la personne. Elle choisira son propre mot de passe à sa première connexion.</p>
           <div class="identifiants">${esc(texte)}</div>
           <div class="actions">
             <button type="button" class="btn sec" id="b-copier">Copier</button>

@@ -82,6 +82,8 @@
   .r-recruteur{background:#e7eefc;color:#1e40af}
   .r-formateur{background:#efe7fb;color:#5b21b6}
   .r-recrue{background:#e8f5ec;color:var(--vert)}
+  .r-recruteur_formateur{background:#e9e7fb;color:#3730a3}
+  .r-commandement{background:#14213d;color:#fff}
   .e-candidature{background:#eef0f3;color:#374151}
   .e-convoque{background:#e7eefc;color:#1e40af}
   .e-fi{background:#fdf0dc;color:#92400e}
@@ -179,7 +181,8 @@ const FIREBASE_CONFIG = {
 const DOMAINE_IDENTIFIANT = "bspp-gprp.fr";
 
 /* ---------- Référentiel ---------- */
-const ROLES = { responsable:"Responsable recrutement", recruteur:"Recruteur", formateur:"Formateur", recrue:"Recrue / Sapeur" };
+const ROLES = { commandement:"Commandement 12e Cie", responsable:"Responsable recrutement", recruteur_formateur:"Recruteur-formateur", recruteur:"Recruteur", formateur:"Formateur", recrue:"Recrue / Sapeur" };
+const AFFECTATION_DEFAUT = "CS Ménilmontant";
 const ETAPES = [["candidature","Candidature"],["convoque","Convoqué recrutement"],["fi","Formation initiale"],["parrainage","Parrainage"],["affecte","Affecté"],["sortie","Sortie du parcours"]];
 const NOM_ETAPE = Object.fromEntries(ETAPES);
 const DOCS = [["cni","CNI RP"],["casier","Casier judiciaire"],["medical","Certificat médical"],["lettre","Lettre de motivation"],["cv","CV RP"],["permis","Permis RP (facultatif)"],["psc1","PSC1 (bonus)"]];
@@ -192,10 +195,12 @@ const GRADES = ["Élève sapeur","Sapeur 2CL","Sapeur 1CL","Caporal","Caporal-ch
 const CLES_MODIFIABLES = {
   recruteur: ["prenom","nom","discord","tel","matricule","cs","grade","etape","motifSortie","dateCandidature","docs","dossier","recrutement"],
   formateur: ["grade","etape","motifSortie","cs","fi","affectation","fisp","qualifs"],
+  recruteur_formateur: ["prenom","nom","discord","tel","matricule","cs","grade","etape","motifSortie","dateCandidature","docs","dossier","recrutement","fi","affectation","fisp","qualifs"],
 };
-const peutModifierCle = (role, cle) => role === "responsable" || (CLES_MODIFIABLES[role] || []).includes(cle);
-const rolesCreables = r => r === "responsable" ? ["recrue","formateur","recruteur","responsable"] : r === "recruteur" ? ["recrue"] : [];
-const estStaff = r => ["responsable","recruteur","formateur"].includes(r);
+const estAdmin = r => r === "responsable" || r === "commandement";   // accès complet
+const peutModifierCle = (role, cle) => estAdmin(role) || (CLES_MODIFIABLES[role] || []).includes(cle);
+const rolesCreables = r => estAdmin(r) ? ["recrue","formateur","recruteur","recruteur_formateur","responsable","commandement"] : ["recruteur","recruteur_formateur"].includes(r) ? ["recrue"] : [];
+const estStaff = r => ["commandement","responsable","recruteur_formateur","recruteur","formateur"].includes(r);
 
 /* ---------- Outils ---------- */
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -211,7 +216,7 @@ function setPath(o, p, v){ const k = p.split("."); let c = o; for (let i = 0; i 
 
 function ficheVierge(){
   return {
-    discord:"", tel:"", matricule:"", grade:"Élève sapeur", cs:"",
+    discord:"", tel:"", matricule:"", grade:"Élève sapeur", cs:AFFECTATION_DEFAUT,
     etape:"fi", motifSortie:"", dateCandidature:auj(),
     docs:{}, dossier:{note:"", decision:"", date:""},
     recrutement:{date:"", sport:"", qcm:"", entretien:"", msp:"", jury:""},
@@ -415,7 +420,7 @@ function vueInstallation(erreur = ""){
     ev.preventDefault();
     const btn = f.querySelector("button"); btn.disabled = true; btn.textContent = "Installation…";
     try {
-      moi = await B.installer({ prenom:f.prenom.value.trim(), nom:f.nom.value.trim(), grade:f.grade.value, cs:"", matricule:"",
+      moi = await B.installer({ prenom:f.prenom.value.trim(), nom:f.nom.value.trim(), grade:f.grade.value, cs:AFFECTATION_DEFAUT, matricule:"",
         identifiant:normaliserId(f.identifiant.value) }, f.mdp.value);
       await accueil();
     } catch (e) { vueInstallation(e.message); }
@@ -451,7 +456,7 @@ function vueConnexion(erreur = ""){
 function entete(){
   const ong = estStaff(moi.role) ? `<nav class="onglets">
       <button data-onglet="suivi" class="${onglet === "suivi" ? "on" : ""}">Suivi des recrues</button>
-      ${moi.role !== "formateur" ? `<button data-onglet="comptes" class="${onglet === "comptes" ? "on" : ""}">Comptes</button>` : ""}
+      ${rolesCreables(moi.role).length || estAdmin(moi.role) ? `<button data-onglet="comptes" class="${onglet === "comptes" ? "on" : ""}">Comptes</button>` : ""}
     </nav>` : "";
   return `
   ${B.mode === "demo" ? `<div class="demo">Mode démo : les données sont enregistrées uniquement dans ce navigateur. Branche Firebase pour la vraie version (voir README).</div>` : ""}
@@ -464,7 +469,7 @@ function entete(){
   </header>`;
 }
 function brancherEntete(){
-  document.getElementById("b-deco").onclick = async () => { await B.deconnexion(); moi = null; fiche = null; vueConnexion(); };
+  document.getElementById("b-deco").onclick = async () => { await B.deconnexion(); moi = null; fiche = null; onglet = "suivi"; filtre = { etape:"", q:"", role:"" }; vueConnexion(); };
   document.querySelectorAll("[data-onglet]").forEach(b => b.onclick = () => {
     if (fiche?.modifie && !confirmerQuitter(b)) return;
     onglet = b.dataset.onglet; fiche = null; afficher();
@@ -567,7 +572,7 @@ const clsBool = v => v === true ? "ok" : v === false ? "ko" : "";
 function vueFiche(){
   const s = fiche.brouillon, rec = calcRecrutement(s), fi = calcFI(s), p = progression(s);
   const docsOk = DOCS_OBLIG.every(k => s.docs[k]);
-  const peutQuelqueChose = moi.role === "responsable" || (CLES_MODIFIABLES[moi.role] || []).length;
+  const peutQuelqueChose = estAdmin(moi.role) || (CLES_MODIFIABLES[moi.role] || []).length;
   $app.innerHTML = entete() + `
   <main>
     <div class="entete-fiche">
@@ -673,7 +678,7 @@ function vueFiche(){
         <div style="margin-top:8px">
           ${fiche.journal.length ? fiche.journal.map((n, i) => ({ ...n, i })).sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(n => `
             <div class="ligne-item"><div class="d">${dateFr(n.date)}</div><div style="flex:1">${esc(n.texte)}${n.auteur ? `<div class="sous">${esc(n.auteur)}</div>` : ""}</div>
-            ${moi.role === "responsable" ? `<button class="lien" data-suppr-note="${n.i}" aria-label="Retirer">✕</button>` : ""}</div>`).join("") : `<div class="sous">Aucune note.</div>`}
+            ${estAdmin(moi.role) ? `<button class="lien" data-suppr-note="${n.i}" aria-label="Retirer">✕</button>` : ""}</div>`).join("") : `<div class="sous">Aucune note.</div>`}
         </div>
       </div>
     </div>
@@ -717,7 +722,7 @@ function brancherFiche(){
     if (el.checked && el.dataset.c.startsWith("fi.modules.")){
       const b = el.dataset.c.replace(/\.fait$/, "");
       if (!getPath(fiche.brouillon, b + ".date")) setPath(fiche.brouillon, b + ".date", auj());
-      if (!getPath(fiche.brouillon, b + ".formateur") && moi.role !== "recruteur") setPath(fiche.brouillon, b + ".formateur", nomComplet(moi));
+      if (!getPath(fiche.brouillon, b + ".formateur") && !["recruteur"].includes(moi.role)) setPath(fiche.brouillon, b + ".formateur", nomComplet(moi));
     }
     marquer(); vueFiche();
   }));
@@ -775,8 +780,8 @@ function vueComptes(){
     <div class="stats">
       <div class="stat"><div class="n">${comptes.filter(c => c.actif).length}</div><div class="l">Comptes actifs</div></div>
       <div class="stat"><div class="n">${n("recrue")}</div><div class="l">Recrues / sapeurs</div></div>
-      <div class="stat"><div class="n">${n("formateur")}</div><div class="l">Formateurs</div></div>
-      <div class="stat"><div class="n">${n("recruteur") + n("responsable")}</div><div class="l">Recruteurs & responsables</div></div>
+      <div class="stat"><div class="n">${n("formateur") + n("recruteur") + n("recruteur_formateur")}</div><div class="l">Formateurs & recruteurs</div></div>
+      <div class="stat"><div class="n">${n("responsable") + n("commandement")}</div><div class="l">Responsables & commandement</div></div>
     </div>
     <div class="carte">
       <div class="barre">
@@ -784,7 +789,7 @@ function vueComptes(){
         <select id="fr"><option value="">Tous les rôles</option>${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${filtre.role === k ? "selected" : ""}>${v}</option>`).join("")}</select>
       </div>
       <div class="tbl-wrap"><table>
-        <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Grade</th><th>Affectation</th><th>Statut</th>${moi.role === "responsable" ? "<th></th>" : ""}</tr></thead>
+        <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Grade</th><th>Affectation</th><th>Statut</th>${estAdmin(moi.role) ? "<th></th>" : ""}</tr></thead>
         <tbody id="corps"></tbody>
       </table></div>
     </div>
@@ -800,7 +805,7 @@ function remplirComptes(){
   const liste = comptes.filter(c => !filtre.role || c.role === filtre.role)
     .filter(c => !q || `${c.prenom} ${c.nom} ${c.identifiant} ${c.matricule} ${c.cs}`.toLowerCase().includes(q))
     .sort((a, b) => (b.actif - a.actif) || nomComplet(a).localeCompare(nomComplet(b), "fr"));
-  const corps = document.getElementById("corps"), resp = moi.role === "responsable";
+  const corps = document.getElementById("corps"), resp = estAdmin(moi.role);
   if (!liste.length){ corps.innerHTML = `<tr><td colspan="7" class="vide">Aucun compte.</td></tr>`; return; }
   corps.innerHTML = liste.map(c => `
     <tr class="${c.actif ? "" : "inactif"}">
@@ -818,7 +823,7 @@ function remplirComptes(){
 function fenetreCompte(existant = null, roleImpose = null){
   const edition = !!existant;
   const roles = edition ? Object.keys(ROLES) : (roleImpose ? [roleImpose] : rolesCreables(moi.role));
-  const v = existant || { prenom:"", nom:"", role:roles[0], grade:"Élève sapeur", matricule:"", cs:"" };
+  const v = existant || { prenom:"", nom:"", role:roles[0], grade:"Élève sapeur", matricule:"", cs:AFFECTATION_DEFAUT };
   const soiMeme = edition && existant.id === moi.id;
   const voile = document.createElement("div");
   voile.className = "voile";
